@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ==================== PARENT ==================== -->
+    <!-- spring-boot-starter-parent provides default configs, plugin versions,
+         and dependency management so you don't have to specify versions manually -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.3</version>
+        <relativePath/> <!-- lookup parent from Maven repository, not local filesystem -->
+    </parent>
+
+    <!-- ==================== PROJECT IDENTITY ==================== -->
+    <!-- groupId:    your organization (like a Java package prefix) -->
+    <!-- artifactId: the name of THIS specific project/module -->
+    <!-- version:    the current version of your app -->
+    <groupId>com.ecommerce</groupId>
+    <artifactId>user-service</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>user-service</name>
+    <description>User management microservice for the e-commerce platform</description>
+
+    <!-- ==================== JAVA VERSION ==================== -->
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+
+    <!-- ==================== DEPENDENCIES ==================== -->
+    <!-- These are the libraries your app needs to run -->
+    <dependencies>
+
+        <!-- spring-boot-starter-web: gives you everything to build REST APIs
+             - Embedded Tomcat server (no need to install a server separately)
+             - Spring MVC (the framework that routes HTTP requests to your code)
+             - Jackson (converts Java objects to JSON and back) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- spring-boot-starter-actuator: health checks and monitoring endpoints
+             - /actuator/health — is the app running?
+             - /actuator/info — app metadata -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- springdoc-openapi: auto-generates Swagger UI for your REST API
+             - Visit /swagger-ui.html to see and test all your endpoints visually -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.8.5</version>
+        </dependency>
+
+        <!-- spring-boot-starter-test: testing libraries (JUnit 5, Mockito, etc.)
+             - scope "test" means this is ONLY available during testing, not in production -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <!-- ==================== BUILD PLUGINS ==================== -->
+    <build>
+        <plugins>
+            <!-- spring-boot-maven-plugin: packages your app into a runnable JAR
+                 Run with: java -jar target/user-service-0.0.1-SNAPSHOT.jar -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
