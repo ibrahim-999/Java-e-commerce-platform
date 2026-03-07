@@ -117,6 +117,15 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- datafaker: generates realistic fake data for testing (like Laravel's Faker)
+             - Names, emails, addresses, phone numbers, etc. -->
+        <dependency>
+            <groupId>net.datafaker</groupId>
+            <artifactId>datafaker</artifactId>
+            <version>2.4.2</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <!-- ==================== BUILD PLUGINS ==================== -->

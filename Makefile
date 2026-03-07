@@ -16,7 +16,7 @@ build: ## Build user-service (compile + package JAR)
 run: ## Run user-service locally
 	cd user-service && mvn spring-boot:run
 
-test: ## Run all tests for user-service
+test: ## Run all tests for user-service (requires: make infra-up)
 	cd user-service && mvn test
 
 clean: ## Clean build artifacts
