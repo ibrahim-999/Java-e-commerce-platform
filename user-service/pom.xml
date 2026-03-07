@@ -58,6 +58,57 @@
             <version>2.8.5</version>
         </dependency>
 
+        <!-- spring-boot-starter-data-jpa: the bridge between Java and your database
+             - JPA (Java Persistence API) = the standard for ORM in Java
+             - Hibernate = the implementation Spring uses under the hood
+             - Lets you work with Java objects instead of writing raw SQL -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- postgresql: the JDBC driver that lets Java talk to PostgreSQL
+             - JDBC = Java Database Connectivity (the low-level protocol)
+             - JPA/Hibernate sits on top of JDBC and makes it easier to use
+             - "runtime" scope = only needed when the app runs, not when compiling -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- flyway-core + flyway-database-postgresql: database migration tool
+             - Instead of manually running SQL scripts, Flyway tracks and applies them
+             - Migrations are versioned (V1__, V2__, V3__) and run in order
+             - Once a migration has run, it is NEVER modified — you create a new one -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- spring-boot-starter-validation: validates data before it hits your database
+             - @NotBlank, @Email, @Size, etc. on your DTOs
+             - Rejects bad data at the controller level with clear error messages -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- lombok: reduces boilerplate code (getters, setters, constructors, builders)
+             - @Data = @Getter + @Setter + @ToString + @EqualsAndHashCode
+             - @Builder = generates the Builder pattern
+             - @NoArgsConstructor / @AllArgsConstructor = generates constructors
+             - "provided" scope = only used at compile time, not included in the JAR -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- spring-boot-starter-test: testing libraries (JUnit 5, Mockito, etc.)
              - scope "test" means this is ONLY available during testing, not in production -->
         <dependency>
