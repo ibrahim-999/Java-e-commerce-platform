@@ -1,0 +1,50 @@
+# Infrastructure-only Docker Compose
+# Used during development — run your Spring Boot apps separately from the terminal
+# Start with:  docker compose -f docker-compose.infra.yml up -d
+# Stop with:   docker compose -f docker-compose.infra.yml down
+
+services:
+
+  # ==================== PostgreSQL (Users DB) ====================
+  # This is the database for the user-service.
+  # Each microservice will get its own database — they never share.
+  postgres-users:
+    image: postgres:16
+    container_name: postgres-users
+    environment:
+      POSTGRES_DB: users_db          # creates this database on first startup
+      POSTGRES_USER: admin           # the database username
+      POSTGRES_PASSWORD: admin123    # the database password (use env vars in production!)
+    ports:
+      - "5432:5432"                  # host:container — access on localhost:5432
+    volumes:
+      - postgres_users_data:/var/lib/postgresql/data   # persist data across restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== pgAdmin (Database UI) ====================
+  # A web-based GUI to view and manage your PostgreSQL databases.
+  # Access at: http://localhost:5050
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com     # login email for pgAdmin
+      PGADMIN_DEFAULT_PASSWORD: admin123          # login password for pgAdmin
+    ports:
+      - "5050:80"                    # pgAdmin runs on port 80 inside container, we map it to 5050
+    depends_on:
+      postgres-users:
+        condition: service_healthy   # wait until PostgreSQL is actually ready
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+# ==================== VOLUMES ====================
+# Named volumes persist data even if you stop/remove containers.
+# Without volumes, your database would be empty every time you restart.
+volumes:
+  postgres_users_data:
+  pgadmin_data:
