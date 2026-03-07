@@ -12,3 +12,7 @@ Thumbs.db
 
 # Environment files
 .env
+
+# SSL certificates
+*.p12
+*.jks
