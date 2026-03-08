@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import static org.mockito.Mockito.*;
 
 // @ExtendWith(MockitoExtension.class) — enables Mockito annotations (@Mock, @InjectMocks)
@@ -36,6 +37,9 @@ class UserServiceTest {
 
     @Mock
     private RoleRepository roleRepository;
+
+    @Mock
+    private PasswordEncoder passwordEncoder;
 
     // @InjectMocks — creates a real UserService and injects the mocks above into it.
     // So userService.userRepository is actually the mock, not the real repository.
@@ -55,6 +59,7 @@ class UserServiceTest {
             Role customerRole = UserFactory.customerRole();
 
             // Tell the mocks what to return when called
+            when(passwordEncoder.encode(anyString())).thenReturn("hashedPassword");
             when(userRepository.existsByEmail(anyString())).thenReturn(false);
             when(roleRepository.findByName("ROLE_CUSTOMER")).thenReturn(Optional.of(customerRole));
             when(userRepository.save(any(User.class))).thenAnswer(invocation -> {

@@ -6,6 +6,7 @@ import com.ecommerce.userservice.model.UserStatus;
 import com.ecommerce.userservice.repository.RoleRepository;
 import com.ecommerce.userservice.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +35,7 @@ public class UserService {
     // "final" means they can't be reassigned after construction — a safety measure.
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
     // ==================== CREATE ====================
 
@@ -50,6 +52,10 @@ public class UserService {
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new IllegalArgumentException("Email already exists: " + user.getEmail());
         }
+
+        // Hash the password with BCrypt before saving.
+        // Never store plain-text passwords — even database admins shouldn't see them.
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
 
         // Set default status for new users
         user.setStatus(UserStatus.ACTIVE);
