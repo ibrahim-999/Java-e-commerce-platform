@@ -42,6 +42,10 @@ public class Order {
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount;
 
+    // Cross-service reference to the payment in payment-service.
+    // Nullable because the payment happens AFTER order creation.
+    private Long paymentId;
+
     // @OneToMany: one order has many order items.
     // CascadeType.ALL: when we save/delete an order, its items are saved/deleted too.
     // orphanRemoval: if we remove an item from the list, it's deleted from the DB.
@@ -49,6 +53,11 @@ public class Order {
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
+
+    // Audit trail — every status change is recorded
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<OrderStatusHistory> statusHistory = new ArrayList<>();
 
     @Version
     private Long version;
@@ -63,5 +72,19 @@ public class Order {
     public void addItem(OrderItem item) {
         items.add(item);
         item.setOrder(this);
+    }
+
+    // Helper: record a status change in the audit trail
+    public void changeStatus(OrderStatus newStatus, String reason) {
+        OrderStatus oldStatus = this.status;
+        this.status = newStatus;
+
+        OrderStatusHistory history = OrderStatusHistory.builder()
+                .order(this)
+                .fromStatus(oldStatus)
+                .toStatus(newStatus)
+                .reason(reason)
+                .build();
+        statusHistory.add(history);
     }
 }

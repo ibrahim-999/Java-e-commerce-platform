@@ -3,6 +3,7 @@ package com.ecommerce.orderservice.controller;
 import com.ecommerce.orderservice.dto.ApiResponse;
 import com.ecommerce.orderservice.dto.CreateOrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
+import com.ecommerce.orderservice.dto.OrderStatusHistoryResponse;
 import com.ecommerce.orderservice.model.Order;
 import com.ecommerce.orderservice.service.OrderService;
 import jakarta.validation.Valid;
@@ -14,6 +15,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -52,6 +55,17 @@ public class OrderController {
                 .map(OrderResponse::fromEntity);
 
         return ResponseEntity.ok(orders);
+    }
+
+    // GET /api/orders/{id}/history — get status change history (audit trail)
+    @GetMapping("/{id}/history")
+    public ResponseEntity<ApiResponse<List<OrderStatusHistoryResponse>>> getOrderHistory(
+            @PathVariable Long id) {
+
+        List<OrderStatusHistoryResponse> history = orderService.getOrderHistory(id).stream()
+                .map(OrderStatusHistoryResponse::fromEntity)
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(history));
     }
 
     // PUT /api/orders/{id}/cancel — cancel an order (restores stock)

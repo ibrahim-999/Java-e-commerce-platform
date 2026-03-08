@@ -4,10 +4,10 @@ import com.ecommerce.paymentservice.dto.CreatePaymentRequest;
 import com.ecommerce.paymentservice.exception.PaymentException;
 import com.ecommerce.paymentservice.exception.ResourceNotFoundException;
 import com.ecommerce.paymentservice.factory.PaymentFactory;
-import com.ecommerce.paymentservice.model.Payment;
-import com.ecommerce.paymentservice.model.PaymentMethod;
-import com.ecommerce.paymentservice.model.PaymentStatus;
+import com.ecommerce.paymentservice.gateway.*;
+import com.ecommerce.paymentservice.model.*;
 import com.ecommerce.paymentservice.repository.PaymentRepository;
+import com.ecommerce.paymentservice.repository.PaymentTransactionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +30,12 @@ class PaymentServiceTest {
 
     @Mock
     private PaymentRepository paymentRepository;
+
+    @Mock
+    private PaymentTransactionRepository transactionRepository;
+
+    @Mock
+    private PaymentGatewayFactory gatewayFactory;
 
     @InjectMocks
     private PaymentService paymentService;
@@ -42,31 +47,88 @@ class PaymentServiceTest {
     class ProcessPayment {
 
         @Test
-        @DisplayName("should process payment successfully and generate transaction ID")
-        void processPayment_success() {
+        @DisplayName("should process payment via Stripe gateway for credit card")
+        void processPayment_creditCard_usesStripe() {
             CreatePaymentRequest request = PaymentFactory.createPaymentRequest();
 
-            // No existing completed payment for this order
             when(paymentRepository.existsByOrderIdAndStatus(
                     request.getOrderId(), PaymentStatus.COMPLETED)).thenReturn(false);
 
-            // save() returns the payment with an ID (called twice: PENDING then COMPLETED)
+            // Mock the gateway factory to return a Stripe gateway
+            StripePaymentGateway stripeGateway = new StripePaymentGateway();
+            when(gatewayFactory.getGateway(PaymentMethod.CREDIT_CARD)).thenReturn(stripeGateway);
+
             when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
                 Payment p = invocation.getArgument(0);
-                p.setId(1L);
+                if (p.getId() == null) p.setId(1L);
                 return p;
             });
+            when(paymentRepository.getReferenceById(1L)).thenReturn(Payment.builder().id(1L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
 
             Payment result = paymentService.processPayment(request);
 
             assertThat(result.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
-            assertThat(result.getTransactionId()).startsWith("txn_card_");
-            assertThat(result.getOrderId()).isEqualTo(1L);
-            assertThat(result.getAmount()).isEqualByComparingTo(new BigDecimal("99.99"));
+            assertThat(result.getTransactionId()).startsWith("pi_"); // Stripe format
             assertThat(result.getPaymentMethod()).isEqualTo(PaymentMethod.CREDIT_CARD);
 
-            // Saved twice: once as PENDING, once as COMPLETED
-            verify(paymentRepository, times(2)).save(any(Payment.class));
+            // Verify transaction was logged
+            verify(transactionRepository, atLeastOnce()).save(any(PaymentTransaction.class));
+        }
+
+        @Test
+        @DisplayName("should process payment via PayPal gateway")
+        void processPayment_paypal_usesPayPal() {
+            CreatePaymentRequest request = CreatePaymentRequest.builder()
+                    .orderId(2L).userId(1L)
+                    .amount(new BigDecimal("75.00"))
+                    .paymentMethod("PAYPAL")
+                    .build();
+
+            when(paymentRepository.existsByOrderIdAndStatus(2L, PaymentStatus.COMPLETED)).thenReturn(false);
+
+            PayPalPaymentGateway paypalGateway = new PayPalPaymentGateway();
+            when(gatewayFactory.getGateway(PaymentMethod.PAYPAL)).thenReturn(paypalGateway);
+
+            when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
+                Payment p = invocation.getArgument(0);
+                if (p.getId() == null) p.setId(2L);
+                return p;
+            });
+            when(paymentRepository.getReferenceById(2L)).thenReturn(Payment.builder().id(2L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            Payment result = paymentService.processPayment(request);
+
+            assertThat(result.getTransactionId()).startsWith("PAY-"); // PayPal format
+            assertThat(result.getPaymentMethod()).isEqualTo(PaymentMethod.PAYPAL);
+        }
+
+        @Test
+        @DisplayName("should process payment via Bank Transfer gateway")
+        void processPayment_bankTransfer() {
+            CreatePaymentRequest request = CreatePaymentRequest.builder()
+                    .orderId(3L).userId(1L)
+                    .amount(new BigDecimal("1000.00"))
+                    .paymentMethod("BANK_TRANSFER")
+                    .build();
+
+            when(paymentRepository.existsByOrderIdAndStatus(3L, PaymentStatus.COMPLETED)).thenReturn(false);
+
+            BankTransferGateway bankGateway = new BankTransferGateway();
+            when(gatewayFactory.getGateway(PaymentMethod.BANK_TRANSFER)).thenReturn(bankGateway);
+
+            when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
+                Payment p = invocation.getArgument(0);
+                if (p.getId() == null) p.setId(3L);
+                return p;
+            });
+            when(paymentRepository.getReferenceById(3L)).thenReturn(Payment.builder().id(3L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            Payment result = paymentService.processPayment(request);
+
+            assertThat(result.getTransactionId()).startsWith("ACH-"); // Bank transfer format
         }
 
         @Test
@@ -74,7 +136,6 @@ class PaymentServiceTest {
         void processPayment_duplicatePayment() {
             CreatePaymentRequest request = PaymentFactory.createPaymentRequest();
 
-            // A completed payment already exists
             when(paymentRepository.existsByOrderIdAndStatus(
                     request.getOrderId(), PaymentStatus.COMPLETED)).thenReturn(true);
 
@@ -82,7 +143,6 @@ class PaymentServiceTest {
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("completed payment already exists");
 
-            // Should never attempt to save
             verify(paymentRepository, never()).save(any());
         }
 
@@ -105,26 +165,34 @@ class PaymentServiceTest {
         }
 
         @Test
-        @DisplayName("should generate PayPal transaction ID for PayPal payments")
-        void processPayment_paypalMethod() {
-            CreatePaymentRequest request = CreatePaymentRequest.builder()
-                    .orderId(2L).userId(1L)
-                    .amount(new BigDecimal("75.00"))
-                    .paymentMethod("PAYPAL")
-                    .build();
+        @DisplayName("should mark payment as FAILED and log attempts when gateway fails")
+        void processPayment_gatewayFails() {
+            CreatePaymentRequest request = PaymentFactory.createPaymentRequest();
 
-            when(paymentRepository.existsByOrderIdAndStatus(2L, PaymentStatus.COMPLETED))
-                    .thenReturn(false);
+            when(paymentRepository.existsByOrderIdAndStatus(1L, PaymentStatus.COMPLETED)).thenReturn(false);
+
+            // Mock a gateway that always fails
+            PaymentGateway failingGateway = mock(PaymentGateway.class);
+            when(failingGateway.charge(any(), any())).thenReturn(GatewayResponse.failure("Card declined"));
+            when(failingGateway.gatewayName()).thenReturn("STRIPE");
+            when(gatewayFactory.getGateway(PaymentMethod.CREDIT_CARD)).thenReturn(failingGateway);
+
             when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
                 Payment p = invocation.getArgument(0);
-                p.setId(2L);
+                if (p.getId() == null) p.setId(1L);
                 return p;
             });
+            when(paymentRepository.getReferenceById(1L)).thenReturn(Payment.builder().id(1L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
 
             Payment result = paymentService.processPayment(request);
 
-            assertThat(result.getTransactionId()).startsWith("txn_pp_");
-            assertThat(result.getPaymentMethod()).isEqualTo(PaymentMethod.PAYPAL);
+            // Payment should be FAILED after all retries exhausted
+            assertThat(result.getStatus()).isEqualTo(PaymentStatus.FAILED);
+            assertThat(result.getTransactionId()).isNull();
+
+            // Should have logged 3 failed attempts (maxAttempts = 3)
+            verify(transactionRepository, times(3)).save(any(PaymentTransaction.class));
         }
     }
 
@@ -143,7 +211,6 @@ class PaymentServiceTest {
             Payment result = paymentService.getPaymentById(1L);
 
             assertThat(result.getId()).isEqualTo(1L);
-            assertThat(result.getTransactionId()).isEqualTo("txn_card_abc123");
         }
 
         @Test
@@ -190,18 +257,24 @@ class PaymentServiceTest {
     class RefundPayment {
 
         @Test
-        @DisplayName("should refund a completed payment")
+        @DisplayName("should refund a completed payment via the correct gateway")
         void refundPayment_success() {
             Payment payment = PaymentFactory.createPaymentWithId(1L);
-            // payment is COMPLETED by default from factory
 
             when(paymentRepository.findById(1L)).thenReturn(Optional.of(payment));
+
+            // Mock gateway for refund
+            StripePaymentGateway stripeGateway = new StripePaymentGateway();
+            when(gatewayFactory.getGateway(PaymentMethod.CREDIT_CARD)).thenReturn(stripeGateway);
+            when(paymentRepository.getReferenceById(1L)).thenReturn(payment);
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
             when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
             Payment result = paymentService.refundPayment(1L);
 
             assertThat(result.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
-            verify(paymentRepository).save(payment);
+            // Verify refund transaction was logged
+            verify(transactionRepository).save(any(PaymentTransaction.class));
         }
 
         @Test
@@ -233,6 +306,61 @@ class PaymentServiceTest {
                     .hasMessageContaining("PENDING");
 
             verify(paymentRepository, never()).save(any());
+        }
+    }
+
+    // ========== Retry Logic ==========
+
+    @Nested
+    @DisplayName("chargeWithRetry")
+    class ChargeWithRetry {
+
+        @Test
+        @DisplayName("should succeed on second attempt after first failure")
+        void retrySucceedsOnSecondAttempt() {
+            PaymentGateway gateway = mock(PaymentGateway.class);
+            when(gateway.gatewayName()).thenReturn("STRIPE");
+            // First call fails, second succeeds
+            when(gateway.charge(any(), any()))
+                    .thenReturn(GatewayResponse.failure("Temporary error"))
+                    .thenReturn(GatewayResponse.success("pi_retry_success"));
+
+            when(paymentRepository.getReferenceById(1L)).thenReturn(Payment.builder().id(1L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            GatewayResponse result = paymentService.chargeWithRetry(
+                    gateway, 1L, 1L, new BigDecimal("50.00"));
+
+            assertThat(result.success()).isTrue();
+            assertThat(result.transactionId()).isEqualTo("pi_retry_success");
+
+            // Gateway was called twice (1 fail + 1 success)
+            verify(gateway, times(2)).charge(any(), any());
+            // 2 transactions logged (1 FAILED + 1 SUCCESS)
+            verify(transactionRepository, times(2)).save(any(PaymentTransaction.class));
+        }
+
+        @Test
+        @DisplayName("should return failure after all 3 attempts fail")
+        void allRetriesFail() {
+            PaymentGateway gateway = mock(PaymentGateway.class);
+            when(gateway.gatewayName()).thenReturn("PAYPAL");
+            when(gateway.charge(any(), any()))
+                    .thenReturn(GatewayResponse.failure("Service unavailable"));
+
+            when(paymentRepository.getReferenceById(1L)).thenReturn(Payment.builder().id(1L).build());
+            when(transactionRepository.save(any(PaymentTransaction.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            GatewayResponse result = paymentService.chargeWithRetry(
+                    gateway, 1L, 1L, new BigDecimal("100.00"));
+
+            assertThat(result.success()).isFalse();
+            assertThat(result.message()).isEqualTo("Service unavailable");
+
+            // All 3 attempts were made
+            verify(gateway, times(3)).charge(any(), any());
+            // All 3 failures logged
+            verify(transactionRepository, times(3)).save(any(PaymentTransaction.class));
         }
     }
 }

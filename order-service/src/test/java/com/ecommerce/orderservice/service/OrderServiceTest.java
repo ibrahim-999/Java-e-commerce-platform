@@ -3,10 +3,12 @@ package com.ecommerce.orderservice.service;
 import com.ecommerce.orderservice.dto.CreateOrderRequest;
 import com.ecommerce.orderservice.dto.OrderItemRequest;
 import com.ecommerce.orderservice.exception.ResourceNotFoundException;
+import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.model.Order;
 import com.ecommerce.orderservice.model.OrderItem;
 import com.ecommerce.orderservice.model.OrderStatus;
 import com.ecommerce.orderservice.repository.OrderRepository;
+import com.ecommerce.orderservice.repository.OrderStatusHistoryRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +27,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 // Unit tests for OrderService.
@@ -37,6 +40,9 @@ class OrderServiceTest {
 
     @Mock
     private OrderRepository orderRepository;
+
+    @Mock
+    private OrderStatusHistoryRepository statusHistoryRepository;
 
     // @Spy lets us mock SOME methods while keeping real ones.
     // We mock the inter-service methods (validateUser, getProduct, etc.)
@@ -52,7 +58,7 @@ class OrderServiceTest {
     class CreateOrder {
 
         @Test
-        @DisplayName("should create order with snapshotted prices")
+        @DisplayName("should create order with snapshotted prices and initiate payment")
         void shouldCreateOrderWithSnapshottedPrices() throws Exception {
             // Arrange: mock inter-service calls
             doNothing().when(orderService).validateUser(1L);
@@ -72,15 +78,30 @@ class OrderServiceTest {
             doReturn(productResponse).when(orderService).getProduct(10L);
             doNothing().when(orderService).reduceProductStock(10L, 2);
 
+            // Mock payment response
+            JsonNode paymentResponse = objectMapper.readTree("""
+                    {
+                        "success": true,
+                        "data": {
+                            "id": 100,
+                            "status": "COMPLETED",
+                            "transactionId": "txn_card_abc123"
+                        }
+                    }
+                    """);
+            doReturn(paymentResponse).when(orderService)
+                    .initiatePayment(any(), eq(1L), any(BigDecimal.class), eq("CREDIT_CARD"));
+
             when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
                 Order saved = invocation.getArgument(0);
-                saved.setId(1L);
+                if (saved.getId() == null) saved.setId(1L);
                 return saved;
             });
 
             CreateOrderRequest request = CreateOrderRequest.builder()
                     .userId(1L)
                     .items(List.of(new OrderItemRequest(10L, 2)))
+                    .paymentMethod("CREDIT_CARD")
                     .build();
 
             // Act
@@ -89,7 +110,8 @@ class OrderServiceTest {
             // Assert
             assertThat(result.getId()).isEqualTo(1L);
             assertThat(result.getUserId()).isEqualTo(1L);
-            assertThat(result.getStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
+            assertThat(result.getPaymentId()).isEqualTo(100L);
             assertThat(result.getItems()).hasSize(1);
 
             OrderItem item = result.getItems().get(0);
@@ -101,9 +123,15 @@ class OrderServiceTest {
             // Total = 999.99 * 2 = 1999.98
             assertThat(result.getTotalAmount()).isEqualByComparingTo(BigDecimal.valueOf(1999.98));
 
+            // Verify status history: PENDING → CONFIRMED
+            assertThat(result.getStatusHistory()).hasSize(2);
+            assertThat(result.getStatusHistory().get(0).getToStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatusHistory().get(1).getToStatus()).isEqualTo(OrderStatus.CONFIRMED);
+
             verify(orderService).validateUser(1L);
             verify(orderService).getProduct(10L);
             verify(orderService).reduceProductStock(10L, 2);
+            verify(orderService).initiatePayment(eq(1L), eq(1L), any(BigDecimal.class), eq("CREDIT_CARD"));
         }
 
         @Test
@@ -131,6 +159,7 @@ class OrderServiceTest {
                             new OrderItemRequest(10L, 1),
                             new OrderItemRequest(20L, 1)
                     ))
+                    .paymentMethod("CREDIT_CARD")
                     .build();
 
             assertThatThrownBy(() -> orderService.createOrder(request))
@@ -138,6 +167,40 @@ class OrderServiceTest {
 
             // Verify compensating transaction: stock was restored for product 10
             verify(orderService).restoreProductStock(10L, 1);
+        }
+
+        @Test
+        @DisplayName("should keep order PENDING if payment fails")
+        void shouldKeepOrderPendingIfPaymentFails() throws Exception {
+            doNothing().when(orderService).validateUser(1L);
+
+            JsonNode productResponse = objectMapper.readTree("""
+                    {"success": true, "data": {"id": 10, "name": "Laptop", "price": "500.00"}}
+                    """);
+            doReturn(productResponse).when(orderService).getProduct(10L);
+            doNothing().when(orderService).reduceProductStock(10L, 1);
+
+            // Payment service is down
+            doThrow(new ServiceUnavailableException("Payment service"))
+                    .when(orderService).initiatePayment(any(), eq(1L), any(BigDecimal.class), eq("PAYPAL"));
+
+            when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+                Order saved = invocation.getArgument(0);
+                if (saved.getId() == null) saved.setId(1L);
+                return saved;
+            });
+
+            CreateOrderRequest request = CreateOrderRequest.builder()
+                    .userId(1L)
+                    .items(List.of(new OrderItemRequest(10L, 1)))
+                    .paymentMethod("PAYPAL")
+                    .build();
+
+            Order result = orderService.createOrder(request);
+
+            // Order is saved but stays PENDING — payment can be retried later
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getPaymentId()).isNull();
         }
     }
 
@@ -190,6 +253,11 @@ class OrderServiceTest {
             Order result = orderService.cancelOrder(1L);
 
             assertThat(result.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+            // Verify status history records the cancellation
+            assertThat(result.getStatusHistory()).hasSize(1);
+            assertThat(result.getStatusHistory().get(0).getFromStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatusHistory().get(0).getToStatus()).isEqualTo(OrderStatus.CANCELLED);
+            assertThat(result.getStatusHistory().get(0).getReason()).isEqualTo("Order cancelled by user");
             verify(orderService).restoreProductStock(10L, 2);
         }
 

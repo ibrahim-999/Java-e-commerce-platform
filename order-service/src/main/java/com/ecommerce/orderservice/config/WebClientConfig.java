@@ -30,6 +30,9 @@ public class WebClientConfig {
     @Value("${service.product-service.url}")
     private String productServiceUrl;
 
+    @Value("${service.payment-service.url}")
+    private String paymentServiceUrl;
+
     // WebClient for calling user-service (HTTPS with self-signed cert).
     // In development, we trust all certificates (InsecureTrustManagerFactory).
     // In production, you'd use proper CA-signed certificates.
@@ -53,6 +56,14 @@ public class WebClientConfig {
     public WebClient productServiceClient() {
         return WebClient.builder()
                 .baseUrl(productServiceUrl)
+                .build();
+    }
+
+    // WebClient for calling payment-service (HTTP, no SSL needed)
+    @Bean
+    public WebClient paymentServiceClient() {
+        return WebClient.builder()
+                .baseUrl(paymentServiceUrl)
                 .build();
     }
 }

@@ -11,6 +11,7 @@ public record OrderResponse(
         Long userId,
         String status,
         BigDecimal totalAmount,
+        Long paymentId,
         List<OrderItemResponse> items,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
@@ -25,6 +26,7 @@ public record OrderResponse(
                 order.getUserId(),
                 order.getStatus().name(),
                 order.getTotalAmount(),
+                order.getPaymentId(),
                 itemResponses,
                 order.getCreatedAt(),
                 order.getUpdatedAt()

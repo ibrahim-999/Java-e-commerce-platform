@@ -7,6 +7,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 // Payment entity — represents a payment attempt for an order.
 //
@@ -49,6 +51,11 @@ public class Payment {
     // In a real system, this would come from Stripe (pi_xxx), PayPal (PAY-xxx), etc.
     @Column(unique = true)
     private String transactionId;
+
+    // Audit trail — every charge/refund attempt is logged here
+    @OneToMany(mappedBy = "payment", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<PaymentTransaction> transactions = new ArrayList<>();
 
     @Version
     private Long version;

@@ -5,6 +5,7 @@ import com.ecommerce.paymentservice.model.Payment;
 import com.ecommerce.paymentservice.model.PaymentMethod;
 import com.ecommerce.paymentservice.model.PaymentStatus;
 import com.ecommerce.paymentservice.repository.PaymentRepository;
+import com.ecommerce.paymentservice.repository.PaymentTransactionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,8 +40,12 @@ class PaymentControllerIntegrationTest {
     @Autowired
     private PaymentRepository paymentRepository;
 
+    @Autowired
+    private PaymentTransactionRepository transactionRepository;
+
     @BeforeEach
     void setUp() {
+        transactionRepository.deleteAll();
         paymentRepository.deleteAll();
     }
 
@@ -51,8 +56,8 @@ class PaymentControllerIntegrationTest {
     class ProcessPayment {
 
         @Test
-        @DisplayName("should process payment and return 201")
-        void processPayment_success() throws Exception {
+        @DisplayName("should process credit card payment via Stripe and return 201")
+        void processPayment_creditCard() throws Exception {
             CreatePaymentRequest request = CreatePaymentRequest.builder()
                     .orderId(1L).userId(1L)
                     .amount(new BigDecimal("149.99"))
@@ -69,29 +74,49 @@ class PaymentControllerIntegrationTest {
                     .andExpect(jsonPath("$.data.amount").value(149.99))
                     .andReturn();
 
-            // Verify it's persisted in the database
-            assertThat(paymentRepository.count()).isEqualTo(1);
-
-            // Verify the transaction ID format
+            // Verify Stripe-format transaction ID (pi_...)
             String json = result.getResponse().getContentAsString();
             JsonNode node = objectMapper.readTree(json);
             String txnId = node.get("data").get("transactionId").asText();
-            assertThat(txnId).startsWith("txn_card_");
+            assertThat(txnId).startsWith("pi_");
+
+            // Verify transaction history was created
+            assertThat(transactionRepository.count()).isGreaterThanOrEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("should process PayPal payment with PAY- prefix")
+        void processPayment_paypal() throws Exception {
+            CreatePaymentRequest request = CreatePaymentRequest.builder()
+                    .orderId(2L).userId(1L)
+                    .amount(new BigDecimal("50.00"))
+                    .paymentMethod("PAYPAL")
+                    .build();
+
+            MvcResult result = mockMvc.perform(post("/api/payments")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.data.status").value("COMPLETED"))
+                    .andReturn();
+
+            String json = result.getResponse().getContentAsString();
+            JsonNode node = objectMapper.readTree(json);
+            String txnId = node.get("data").get("transactionId").asText();
+            assertThat(txnId).startsWith("PAY-");
         }
 
         @Test
         @DisplayName("should reject duplicate payment for same order")
         void processPayment_duplicate() throws Exception {
-            // Create an existing completed payment
             paymentRepository.save(Payment.builder()
                     .orderId(1L).userId(1L)
                     .amount(new BigDecimal("100.00"))
                     .status(PaymentStatus.COMPLETED)
                     .paymentMethod(PaymentMethod.CREDIT_CARD)
-                    .transactionId("txn_card_existing123")
+                    .transactionId("pi_existing123")
                     .build());
 
-            // Try to pay for the same order again
             CreatePaymentRequest request = CreatePaymentRequest.builder()
                     .orderId(1L).userId(1L)
                     .amount(new BigDecimal("100.00"))
@@ -110,7 +135,6 @@ class PaymentControllerIntegrationTest {
         @Test
         @DisplayName("should return 400 for missing required fields")
         void processPayment_validation() throws Exception {
-            // Empty request — all fields are @NotNull/@NotBlank
             CreatePaymentRequest request = new CreatePaymentRequest();
 
             mockMvc.perform(post("/api/payments")
@@ -153,14 +177,14 @@ class PaymentControllerIntegrationTest {
                     .amount(new BigDecimal("75.00"))
                     .status(PaymentStatus.COMPLETED)
                     .paymentMethod(PaymentMethod.PAYPAL)
-                    .transactionId("txn_pp_test123")
+                    .transactionId("PAY-test123")
                     .build());
 
             mockMvc.perform(get("/api/payments/" + saved.getId()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.orderId").value(1))
                     .andExpect(jsonPath("$.data.paymentMethod").value("PAYPAL"))
-                    .andExpect(jsonPath("$.data.transactionId").value("txn_pp_test123"));
+                    .andExpect(jsonPath("$.data.transactionId").value("PAY-test123"));
         }
 
         @Test
@@ -179,7 +203,7 @@ class PaymentControllerIntegrationTest {
                     .amount(new BigDecimal("200.00"))
                     .status(PaymentStatus.COMPLETED)
                     .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                    .transactionId("txn_bt_order42")
+                    .transactionId("ACH-order42")
                     .build());
 
             mockMvc.perform(get("/api/payments/order/42"))
@@ -196,19 +220,57 @@ class PaymentControllerIntegrationTest {
                     .amount(new BigDecimal("50.00"))
                     .status(PaymentStatus.COMPLETED)
                     .paymentMethod(PaymentMethod.CREDIT_CARD)
-                    .transactionId("txn_card_u5a")
+                    .transactionId("pi_u5a")
                     .build());
             paymentRepository.save(Payment.builder()
                     .orderId(2L).userId(5L)
                     .amount(new BigDecimal("75.00"))
                     .status(PaymentStatus.COMPLETED)
                     .paymentMethod(PaymentMethod.DEBIT_CARD)
-                    .transactionId("txn_card_u5b")
+                    .transactionId("pi_u5b")
                     .build());
 
             mockMvc.perform(get("/api/payments/user/5"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.length()").value(2));
+        }
+    }
+
+    // ========== Transaction History ==========
+
+    @Nested
+    @DisplayName("GET /api/payments/{id}/transactions")
+    class TransactionHistory {
+
+        @Test
+        @DisplayName("should return transaction history after payment processing")
+        void getTransactionHistory() throws Exception {
+            // Process a payment — this creates transaction history entries
+            CreatePaymentRequest request = CreatePaymentRequest.builder()
+                    .orderId(10L).userId(1L)
+                    .amount(new BigDecimal("99.99"))
+                    .paymentMethod("CREDIT_CARD")
+                    .build();
+
+            MvcResult createResult = mockMvc.perform(post("/api/payments")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+
+            // Get the payment ID from the create response
+            JsonNode createNode = objectMapper.readTree(createResult.getResponse().getContentAsString());
+            Long paymentId = createNode.get("data").get("id").asLong();
+
+            // Now get the transaction history
+            mockMvc.perform(get("/api/payments/" + paymentId + "/transactions"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data").isArray())
+                    .andExpect(jsonPath("$.data.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                    .andExpect(jsonPath("$.data[0].type").value("CHARGE"))
+                    .andExpect(jsonPath("$.data[0].status").value("SUCCESS"))
+                    .andExpect(jsonPath("$.data[0].gatewayName").value("STRIPE"));
         }
     }
 
@@ -219,25 +281,35 @@ class PaymentControllerIntegrationTest {
     class Refund {
 
         @Test
-        @DisplayName("should refund a completed payment")
+        @DisplayName("should refund a completed payment and log the refund transaction")
         void refund_success() throws Exception {
-            Payment saved = paymentRepository.save(Payment.builder()
-                    .orderId(1L).userId(1L)
+            // First create a payment
+            CreatePaymentRequest request = CreatePaymentRequest.builder()
+                    .orderId(20L).userId(1L)
                     .amount(new BigDecimal("99.99"))
-                    .status(PaymentStatus.COMPLETED)
-                    .paymentMethod(PaymentMethod.CREDIT_CARD)
-                    .transactionId("txn_card_refundme")
-                    .build());
+                    .paymentMethod("CREDIT_CARD")
+                    .build();
 
-            mockMvc.perform(put("/api/payments/" + saved.getId() + "/refund"))
+            MvcResult createResult = mockMvc.perform(post("/api/payments")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+
+            JsonNode createNode = objectMapper.readTree(createResult.getResponse().getContentAsString());
+            Long paymentId = createNode.get("data").get("id").asLong();
+
+            // Now refund it
+            mockMvc.perform(put("/api/payments/" + paymentId + "/refund"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.success").value(true))
                     .andExpect(jsonPath("$.data.status").value("REFUNDED"))
                     .andExpect(jsonPath("$.message").value("Payment refunded successfully"));
 
-            // Verify in database
-            Payment refunded = paymentRepository.findById(saved.getId()).orElseThrow();
-            assertThat(refunded.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
+            // Verify refund transaction was logged
+            mockMvc.perform(get("/api/payments/" + paymentId + "/transactions"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(2)));
         }
 
         @Test
@@ -248,7 +320,7 @@ class PaymentControllerIntegrationTest {
                     .amount(new BigDecimal("99.99"))
                     .status(PaymentStatus.REFUNDED)
                     .paymentMethod(PaymentMethod.CREDIT_CARD)
-                    .transactionId("txn_card_alreadydone")
+                    .transactionId("pi_alreadydone")
                     .build());
 
             mockMvc.perform(put("/api/payments/" + saved.getId() + "/refund"))

@@ -7,7 +7,9 @@ import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.model.Order;
 import com.ecommerce.orderservice.model.OrderItem;
 import com.ecommerce.orderservice.model.OrderStatus;
+import com.ecommerce.orderservice.model.OrderStatusHistory;
 import com.ecommerce.orderservice.repository.OrderRepository;
+import com.ecommerce.orderservice.repository.OrderStatusHistoryRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
@@ -43,8 +45,10 @@ import java.util.List;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+    private final OrderStatusHistoryRepository statusHistoryRepository;
     private final WebClient userServiceClient;
     private final WebClient productServiceClient;
+    private final WebClient paymentServiceClient;
 
     // ==================== CREATE ORDER ====================
 
@@ -110,7 +114,39 @@ public class OrderService {
         // Add items with back-reference
         items.forEach(order::addItem);
 
-        return orderRepository.save(order);
+        // Record the initial status in the audit trail
+        order.changeStatus(OrderStatus.PENDING, "Order placed");
+
+        order = orderRepository.save(order);
+
+        // Step 5: Initiate payment via payment-service.
+        // If payment fails, the order stays PENDING — the user can retry payment later.
+        // We don't roll back the order because the stock is already reserved.
+        // This is a common pattern: order creation and payment are separate concerns.
+        try {
+            JsonNode paymentResult = initiatePayment(
+                    order.getId(), request.getUserId(), totalAmount, request.getPaymentMethod());
+
+            Long paymentId = paymentResult.get("data").get("id").asLong();
+            String paymentStatus = paymentResult.get("data").get("status").asText();
+
+            order.setPaymentId(paymentId);
+
+            if ("COMPLETED".equals(paymentStatus)) {
+                order.changeStatus(OrderStatus.CONFIRMED, "Payment completed, paymentId: " + paymentId);
+                log.info("Payment completed for order {}, paymentId: {}", order.getId(), paymentId);
+            } else {
+                log.warn("Payment not completed for order {}. Payment status: {}", order.getId(), paymentStatus);
+            }
+
+            order = orderRepository.save(order);
+        } catch (Exception e) {
+            // Payment failed, but order is saved with PENDING status.
+            // The user can retry payment or an admin can investigate.
+            log.error("Payment initiation failed for order {}: {}", order.getId(), e.getMessage());
+        }
+
+        return order;
     }
 
     // ==================== READ ====================
@@ -124,6 +160,13 @@ public class OrderService {
     @Transactional(readOnly = true)
     public Page<Order> getOrdersByUserId(Long userId, Pageable pageable) {
         return orderRepository.findByUserId(userId, pageable);
+    }
+
+    // Get the status change history for an order (audit trail)
+    @Transactional(readOnly = true)
+    public List<OrderStatusHistory> getOrderHistory(Long orderId) {
+        getOrderById(orderId); // verify order exists
+        return statusHistoryRepository.findByOrderIdOrderByChangedAtAsc(orderId);
     }
 
     // ==================== CANCEL ====================
@@ -149,7 +192,7 @@ public class OrderService {
             }
         }
 
-        order.setStatus(OrderStatus.CANCELLED);
+        order.changeStatus(OrderStatus.CANCELLED, "Order cancelled by user");
         return order;
     }
 
@@ -255,5 +298,33 @@ public class OrderService {
                 productId, quantity, throwable.getMessage());
         // Don't throw here — we're already in a compensating transaction
         // Log for manual resolution by operations team
+    }
+
+    // ==================== PAYMENT SERVICE ====================
+
+    @CircuitBreaker(name = "paymentService", fallbackMethod = "initiatePaymentFallback")
+    public JsonNode initiatePayment(Long orderId, Long userId, BigDecimal amount, String paymentMethod) {
+        log.info("Initiating payment for order {}, amount: {}, method: {}", orderId, amount, paymentMethod);
+
+        // Build the request body matching payment-service's CreatePaymentRequest
+        var paymentRequest = java.util.Map.of(
+                "orderId", orderId,
+                "userId", userId,
+                "amount", amount,
+                "paymentMethod", paymentMethod
+        );
+
+        return paymentServiceClient.post()
+                .uri("/api/payments")
+                .bodyValue(paymentRequest)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+    }
+
+    public JsonNode initiatePaymentFallback(Long orderId, Long userId, BigDecimal amount,
+                                            String paymentMethod, Throwable throwable) {
+        log.error("Payment service unavailable for order {}: {}", orderId, throwable.getMessage());
+        throw new ServiceUnavailableException("Payment service");
     }
 }

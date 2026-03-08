@@ -3,6 +3,7 @@ package com.ecommerce.paymentservice.controller;
 import com.ecommerce.paymentservice.dto.ApiResponse;
 import com.ecommerce.paymentservice.dto.CreatePaymentRequest;
 import com.ecommerce.paymentservice.dto.PaymentResponse;
+import com.ecommerce.paymentservice.dto.TransactionResponse;
 import com.ecommerce.paymentservice.model.Payment;
 import com.ecommerce.paymentservice.service.PaymentService;
 import jakarta.validation.Valid;
@@ -56,6 +57,17 @@ public class PaymentController {
                 .map(PaymentResponse::fromEntity)
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(payments));
+    }
+
+    // GET /api/payments/{id}/transactions — get transaction history (audit trail)
+    @GetMapping("/{id}/transactions")
+    public ResponseEntity<ApiResponse<List<TransactionResponse>>> getTransactionHistory(
+            @PathVariable Long id) {
+
+        List<TransactionResponse> transactions = paymentService.getTransactionHistory(id).stream()
+                .map(TransactionResponse::fromEntity)
+                .toList();
+        return ResponseEntity.ok(ApiResponse.success(transactions));
     }
 
     // PUT /api/payments/{id}/refund — refund a payment
