@@ -88,7 +88,7 @@ class UserControllerIntegrationTest {
         String response = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                LoginRequest.builder().email("admin@test.com").password("admin123").build())))
+                                new LoginRequest("admin@test.com", "admin123"))))
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(response).get("accessToken").asText();
     }
@@ -144,10 +144,7 @@ class UserControllerIntegrationTest {
             mockMvc.perform(post("/api/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
-                                    LoginRequest.builder()
-                                            .email(registerReq.getEmail())
-                                            .password(registerReq.getPassword())
-                                            .build())))
+                                    new LoginRequest(registerReq.getEmail(), registerReq.getPassword()))))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.accessToken").isNotEmpty())
                     .andExpect(jsonPath("$.refreshToken").isNotEmpty());
@@ -164,10 +161,7 @@ class UserControllerIntegrationTest {
             mockMvc.perform(post("/api/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
-                                    LoginRequest.builder()
-                                            .email(registerReq.getEmail())
-                                            .password("wrongpassword")
-                                            .build())))
+                                    new LoginRequest(registerReq.getEmail(), "wrongpassword"))))
                     .andExpect(status().isUnauthorized());
         }
     }
@@ -249,6 +243,69 @@ class UserControllerIntegrationTest {
             mockMvc.perform(delete("/api/users/1")
                             .header("Authorization", "Bearer " + customerToken))
                     .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/users/search (Strategy pattern)")
+    class SearchUsers {
+
+        @Test
+        @DisplayName("should search by email")
+        void shouldSearchByEmail() throws Exception {
+            CreateUserRequest request = UserFactory.createUserRequest();
+            String token = registerAndGetToken(request);
+
+            mockMvc.perform(get("/api/users/search")
+                            .header("Authorization", "Bearer " + token)
+                            .param("type", "email")
+                            .param("query", request.getEmail()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content").isArray())
+                    .andExpect(jsonPath("$.content.length()").value(1));
+        }
+
+        @Test
+        @DisplayName("should search by name")
+        void shouldSearchByName() throws Exception {
+            CreateUserRequest request = UserFactory.createUserRequest();
+            String token = registerAndGetToken(request);
+
+            mockMvc.perform(get("/api/users/search")
+                            .header("Authorization", "Bearer " + token)
+                            .param("type", "name")
+                            .param("query", request.getFirstName()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content").isArray())
+                    .andExpect(jsonPath("$.content.length()", greaterThanOrEqualTo(1)));
+        }
+
+        @Test
+        @DisplayName("should search by status")
+        void shouldSearchByStatus() throws Exception {
+            CreateUserRequest request = UserFactory.createUserRequest();
+            String token = registerAndGetToken(request);
+
+            mockMvc.perform(get("/api/users/search")
+                            .header("Authorization", "Bearer " + token)
+                            .param("type", "status")
+                            .param("query", "ACTIVE"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content").isArray())
+                    .andExpect(jsonPath("$.content.length()", greaterThanOrEqualTo(1)));
+        }
+
+        @Test
+        @DisplayName("should return 400 for unknown search type")
+        void shouldReturn400ForUnknownType() throws Exception {
+            CreateUserRequest request = UserFactory.createUserRequest();
+            String token = registerAndGetToken(request);
+
+            mockMvc.perform(get("/api/users/search")
+                            .header("Authorization", "Bearer " + token)
+                            .param("type", "phone")
+                            .param("query", "12345"))
+                    .andExpect(status().isBadRequest());
         }
     }
 }

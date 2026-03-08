@@ -1,5 +1,7 @@
 package com.ecommerce.userservice.service;
 
+import com.ecommerce.userservice.exception.DuplicateResourceException;
+import com.ecommerce.userservice.exception.ResourceNotFoundException;
 import com.ecommerce.userservice.model.Role;
 import com.ecommerce.userservice.model.User;
 import com.ecommerce.userservice.model.UserStatus;
@@ -50,7 +52,7 @@ public class UserService {
     public User createUser(User user) {
         // Business rule: no duplicate emails
         if (userRepository.existsByEmail(user.getEmail())) {
-            throw new IllegalArgumentException("Email already exists: " + user.getEmail());
+            throw new DuplicateResourceException("User", "email", user.getEmail());
         }
 
         // Hash the password with BCrypt before saving.
@@ -62,7 +64,7 @@ public class UserService {
 
         // Assign the default ROLE_CUSTOMER to every new user
         Role customerRole = roleRepository.findByName("ROLE_CUSTOMER")
-                .orElseThrow(() -> new RuntimeException("Default role ROLE_CUSTOMER not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Role", "name", "ROLE_CUSTOMER"));
         user.setRoles(Set.of(customerRole));
 
         return userRepository.save(user);
@@ -78,13 +80,13 @@ public class UserService {
         // orElseThrow: if findById returns empty Optional, throw an exception.
         // This is cleaner than: if (user == null) throw ...
         return userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
     }
 
     @Transactional(readOnly = true)
     public User getUserByEmail(String email) {
         return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found with email: " + email));
+                .orElseThrow(() -> new ResourceNotFoundException("User", "email", email));
     }
 
     // Pageable contains: page number, page size, and sort direction.

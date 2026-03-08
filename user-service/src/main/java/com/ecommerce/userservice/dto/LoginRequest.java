@@ -2,21 +2,19 @@ package com.ecommerce.userservice.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class LoginRequest {
+// Record with validation — annotations go directly on the record components.
+// Spring's @Valid works exactly the same as with regular classes.
+//
+// Jackson deserializes the JSON request body into this record automatically:
+//   {"email": "john@example.com", "password": "secret123"}
+//   → new LoginRequest("john@example.com", "secret123")
 
-    @NotBlank(message = "Email is required")
-    @Email(message = "Email must be valid")
-    private String email;
+public record LoginRequest(
+        @NotBlank(message = "Email is required")
+        @Email(message = "Email must be valid")
+        String email,
 
-    @NotBlank(message = "Password is required")
-    private String password;
-}
+        @NotBlank(message = "Password is required")
+        String password
+) {}

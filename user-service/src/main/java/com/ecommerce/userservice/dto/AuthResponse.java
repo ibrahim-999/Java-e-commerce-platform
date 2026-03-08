@@ -1,18 +1,13 @@
 package com.ecommerce.userservice.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+// Record — immutable data carrier for authentication tokens.
+// Jackson (Spring's JSON library) fully supports records since Spring Boot 3.x.
+// It serializes record components as JSON fields:
+//   {"accessToken": "...", "refreshToken": "...", "email": "...", "type": "Bearer"}
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class AuthResponse {
-
-    private String accessToken;
-    private String refreshToken;
-    private String email;
-    private String type;     // always "Bearer"
-}
+public record AuthResponse(
+        String accessToken,
+        String refreshToken,
+        String email,
+        String type
+) {}

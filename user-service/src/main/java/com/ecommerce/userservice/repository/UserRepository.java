@@ -5,6 +5,9 @@ import com.ecommerce.userservice.model.UserStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -52,4 +55,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // "Containing" = LIKE with wildcards on both sides
     // "IgnoreCase" = case-insensitive search
     List<User> findByFirstNameContainingIgnoreCase(String firstName);
+
+    // ==================== PAGINATED SEARCH METHODS ====================
+    // Same query derivation, but with a Pageable parameter → returns Page<User>
+    // Spring adds LIMIT/OFFSET and counts total results automatically.
+
+    // Search by email (partial match, case-insensitive)
+    Page<User> findByEmailContainingIgnoreCase(String email, Pageable pageable);
+
+    // Search by first name OR last name (partial match, case-insensitive)
+    // "Or" in the method name = SQL OR clause
+    // → WHERE LOWER(first_name) LIKE '%query%' OR LOWER(last_name) LIKE '%query%'
+    Page<User> findByFirstNameContainingIgnoreCaseOrLastNameContainingIgnoreCase(
+            String firstName, String lastName, Pageable pageable);
+
+    // Search by status (exact match, paginated)
+    Page<User> findByStatus(UserStatus status, Pageable pageable);
 }

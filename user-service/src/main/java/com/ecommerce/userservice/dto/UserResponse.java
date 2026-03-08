@@ -1,50 +1,56 @@
 package com.ecommerce.userservice.dto;
 
 import com.ecommerce.userservice.model.User;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-// This DTO defines what the client RECEIVES.
-// Notice: NO password field. The client never sees the password.
+// Java Record — an immutable data carrier introduced in Java 16.
+//
+// This single line:
+//   public record UserResponse(Long id, String firstName, ...) {}
+//
+// Replaces ALL of this Lombok boilerplate:
+//   @Data @Builder @NoArgsConstructor @AllArgsConstructor
+//   private Long id;
+//   private String firstName;
+//   ... (plus generated getters, setters, equals, hashCode, toString)
+//
+// Key differences from a regular class:
+//   1. All fields are automatically "final" — immutable, no setters
+//   2. Getters use the field name directly: user.firstName() not user.getFirstName()
+//   3. Constructor, equals(), hashCode(), toString() are auto-generated
+//   4. Records CAN have static methods and custom constructors
+//
+// Records are perfect for DTOs — they carry data and nothing else.
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class UserResponse {
-
-    private Long id;
-    private String firstName;
-    private String lastName;
-    private String email;
-    private String phoneNumber;
-    private String status;
-    private Set<String> roles;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
-
-    // Static factory method — converts a User entity to a UserResponse DTO.
-    // This is the ONLY place where entity → DTO conversion happens.
-    // Having it here keeps the conversion logic in one place.
+public record UserResponse(
+        Long id,
+        String firstName,
+        String lastName,
+        String email,
+        String phoneNumber,
+        String status,
+        Set<String> roles,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+) {
+    // Static factory method — converts a User entity to a UserResponse record.
+    // Records can have static methods just like regular classes.
     public static UserResponse fromEntity(User user) {
-        return UserResponse.builder()
-                .id(user.getId())
-                .firstName(user.getFirstName())
-                .lastName(user.getLastName())
-                .email(user.getEmail())
-                .phoneNumber(user.getPhoneNumber())
-                .status(user.getStatus().name())
-                .roles(user.getRoles().stream()
-                        .map(role -> role.getName())   // Role object → role name string
-                        .collect(Collectors.toSet()))
-                .createdAt(user.getCreatedAt())
-                .updatedAt(user.getUpdatedAt())
-                .build();
+        return new UserResponse(
+                user.getId(),
+                user.getFirstName(),
+                user.getLastName(),
+                user.getEmail(),
+                user.getPhoneNumber(),
+                user.getStatus().name(),
+                user.getRoles().stream()
+                        .map(role -> role.getName())
+                        .collect(Collectors.toSet()),
+                user.getCreatedAt(),
+                user.getUpdatedAt()
+        );
     }
 }

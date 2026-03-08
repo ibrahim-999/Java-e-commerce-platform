@@ -1,5 +1,7 @@
 package com.ecommerce.userservice.service;
 
+import com.ecommerce.userservice.exception.DuplicateResourceException;
+import com.ecommerce.userservice.exception.ResourceNotFoundException;
 import com.ecommerce.userservice.factory.UserFactory;
 import com.ecommerce.userservice.model.Role;
 import com.ecommerce.userservice.model.User;
@@ -90,8 +92,8 @@ class UserServiceTest {
 
             // assertThatThrownBy — verifies an exception is thrown
             assertThatThrownBy(() -> userService.createUser(user))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Email already exists");
+                    .isInstanceOf(DuplicateResourceException.class)
+                    .hasMessageContaining("already exists with email");
 
             // save() should NEVER be called if email exists
             verify(userRepository, never()).save(any());
@@ -121,8 +123,8 @@ class UserServiceTest {
             when(userRepository.findById(99L)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> userService.getUserById(99L))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("User not found");
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining("User not found with id: 99");
         }
     }
 
@@ -148,8 +150,8 @@ class UserServiceTest {
             when(userRepository.findByEmail("nonexistent@test.com")).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> userService.getUserByEmail("nonexistent@test.com"))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("User not found");
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining("User not found with email: nonexistent@test.com");
         }
     }
 
@@ -199,8 +201,8 @@ class UserServiceTest {
             when(userRepository.findById(99L)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> userService.deleteUser(99L))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("User not found");
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining("User not found with id: 99");
 
             verify(userRepository, never()).delete(any());
         }

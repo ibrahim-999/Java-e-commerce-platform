@@ -1,57 +1,71 @@
 package com.ecommerce.userservice.config;
 
+import com.ecommerce.userservice.dto.ApiResponse;
+import com.ecommerce.userservice.exception.DuplicateResourceException;
+import com.ecommerce.userservice.exception.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.stream.Collectors;
 
-// @RestControllerAdvice — catches exceptions thrown by ANY controller
-// and converts them into proper HTTP responses with the right status code.
-//
-// Without this, unhandled exceptions return ugly 500 errors with stack traces.
-// With this, every error returns a clean, consistent JSON response.
-// We'll expand this significantly in Phase 4.
+// @RestControllerAdvice — catches exceptions from ALL controllers.
+// Each @ExceptionHandler method handles a specific exception type.
+// The most specific handler wins (DuplicateResourceException before RuntimeException).
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // Catches IllegalArgumentException (e.g., "Email already exists")
-    // Returns 409 Conflict — the request conflicts with existing data
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                "status", 409,
-                "error", "Conflict",
-                "message", ex.getMessage(),
-                "timestamp", LocalDateTime.now().toString()
-        ));
+    // 404 — Resource not found
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotFound(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error(ex.getMessage()));
     }
 
-    // Catches BadCredentialsException (wrong email or password during login)
-    // Returns 401 Unauthorized
+    // 409 — Duplicate resource (e.g., email already exists)
+    @ExceptionHandler(DuplicateResourceException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDuplicate(DuplicateResourceException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(ex.getMessage()));
+    }
+
+    // 401 — Bad credentials (wrong email or password)
     @ExceptionHandler(BadCredentialsException.class)
-    public ResponseEntity<Map<String, Object>> handleBadCredentials(BadCredentialsException ex) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                "status", 401,
-                "error", "Unauthorized",
-                "message", "Invalid email or password",
-                "timestamp", LocalDateTime.now().toString()
-        ));
+    public ResponseEntity<ApiResponse<Void>> handleBadCredentials(BadCredentialsException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error("Invalid email or password"));
     }
 
-    // Catches RuntimeException (e.g., "User not found with id: 99")
-    // Returns 404 Not Found
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<Map<String, Object>> handleRuntimeException(RuntimeException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
-                "status", 404,
-                "error", "Not Found",
-                "message", ex.getMessage(),
-                "timestamp", LocalDateTime.now().toString()
-        ));
+    // 400 — Validation errors (@Valid failed)
+    // Collects all field errors into a readable map: {"email": "must be valid", "firstName": "is required"}
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = ex.getBindingResult().getFieldErrors().stream()
+                .collect(Collectors.toMap(
+                        FieldError::getField,
+                        fieldError -> fieldError.getDefaultMessage() != null
+                                ? fieldError.getDefaultMessage()
+                                : "Invalid value",
+                        (first, second) -> first  // if duplicate field, keep first error
+                ));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.<Map<String, String>>builder()
+                        .success(false)
+                        .message("Validation failed")
+                        .data(errors)
+                        .build());
+    }
+
+    // 400 — Illegal argument (catch-all for bad input)
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ex.getMessage()));
     }
 }

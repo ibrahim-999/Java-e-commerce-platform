@@ -47,12 +47,12 @@ public class AuthController {
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
 
         // Generate tokens and return them
-        return ResponseEntity.status(HttpStatus.CREATED).body(AuthResponse.builder()
-                .accessToken(jwtService.generateAccessToken(userDetails))
-                .refreshToken(jwtService.generateRefreshToken(userDetails))
-                .email(request.getEmail())
-                .type("Bearer")
-                .build());
+        // Records use constructor instead of builder — all fields in order
+        return ResponseEntity.status(HttpStatus.CREATED).body(new AuthResponse(
+                jwtService.generateAccessToken(userDetails),
+                jwtService.generateRefreshToken(userDetails),
+                request.getEmail(),
+                "Bearer"));
     }
 
     // POST /api/auth/login
@@ -64,19 +64,19 @@ public class AuthController {
         //   2. Compares the provided password with the stored BCrypt hash
         //   3. If they match, returns successfully
         //   4. If they don't match, throws BadCredentialsException
+        // Records use field() not getField() — so request.email() not request.getEmail()
         authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+                new UsernamePasswordAuthenticationToken(request.email(), request.password())
         );
 
         // If we get here, authentication succeeded — generate tokens
-        UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
+        UserDetails userDetails = userDetailsService.loadUserByUsername(request.email());
 
-        return ResponseEntity.ok(AuthResponse.builder()
-                .accessToken(jwtService.generateAccessToken(userDetails))
-                .refreshToken(jwtService.generateRefreshToken(userDetails))
-                .email(request.getEmail())
-                .type("Bearer")
-                .build());
+        return ResponseEntity.ok(new AuthResponse(
+                jwtService.generateAccessToken(userDetails),
+                jwtService.generateRefreshToken(userDetails),
+                request.email(),
+                "Bearer"));
     }
 
     // POST /api/auth/refresh
@@ -100,11 +100,10 @@ public class AuthController {
         }
 
         // Generate a new access token (refresh token stays the same)
-        return ResponseEntity.ok(AuthResponse.builder()
-                .accessToken(jwtService.generateAccessToken(userDetails))
-                .refreshToken(refreshToken)
-                .email(email)
-                .type("Bearer")
-                .build());
+        return ResponseEntity.ok(new AuthResponse(
+                jwtService.generateAccessToken(userDetails),
+                refreshToken,
+                email,
+                "Bearer"));
     }
 }

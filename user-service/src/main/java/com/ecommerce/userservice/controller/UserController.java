@@ -1,9 +1,11 @@
 package com.ecommerce.userservice.controller;
 
+import com.ecommerce.userservice.dto.ApiResponse;
 import com.ecommerce.userservice.dto.CreateUserRequest;
 import com.ecommerce.userservice.dto.UpdateUserRequest;
 import com.ecommerce.userservice.dto.UserResponse;
 import com.ecommerce.userservice.model.User;
+import com.ecommerce.userservice.service.UserSearchService;
 import com.ecommerce.userservice.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final UserSearchService userSearchService;
 
     // ==================== CREATE ====================
     // POST /api/users
@@ -39,20 +42,21 @@ public class UserController {
     //   Don't use 200 OK for creation — 201 is the standard.
 
     @PostMapping
-    public ResponseEntity<UserResponse> createUser(@Valid @RequestBody CreateUserRequest request) {
+    public ResponseEntity<ApiResponse<UserResponse>> createUser(@Valid @RequestBody CreateUserRequest request) {
         // Convert DTO → Entity (we control what goes into the entity)
         User user = User.builder()
                 .firstName(request.getFirstName())
                 .lastName(request.getLastName())
                 .email(request.getEmail())
-                .password(request.getPassword())  // will be hashed in Phase 3
+                .password(request.getPassword())
                 .phoneNumber(request.getPhoneNumber())
                 .build();
 
         User savedUser = userService.createUser(user);
 
-        // Convert Entity → DTO (password is excluded)
-        return ResponseEntity.status(HttpStatus.CREATED).body(UserResponse.fromEntity(savedUser));
+        // Convert Entity → DTO (password is excluded), wrap in ApiResponse
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("User created successfully", UserResponse.fromEntity(savedUser)));
     }
 
     // ==================== READ (single) ====================
@@ -62,9 +66,9 @@ public class UserController {
     //   GET /api/users/5 → id = 5
 
     @GetMapping("/{id}")
-    public ResponseEntity<UserResponse> getUserById(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<UserResponse>> getUserById(@PathVariable Long id) {
         User user = userService.getUserById(id);
-        return ResponseEntity.ok(UserResponse.fromEntity(user));
+        return ResponseEntity.ok(ApiResponse.success(UserResponse.fromEntity(user)));
     }
 
     // ==================== READ (all — paginated) ====================
@@ -103,11 +107,35 @@ public class UserController {
         return ResponseEntity.ok(users);
     }
 
+    // ==================== SEARCH (Strategy pattern) ====================
+    // GET /api/users/search?type=email&query=john&page=0&size=10
+    // GET /api/users/search?type=name&query=doe
+    // GET /api/users/search?type=status&query=ACTIVE
+    //
+    // The "type" parameter picks which search strategy to use.
+    // The controller doesn't know HOW to search — it delegates to UserSearchService,
+    // which picks the right strategy. This is the Strategy pattern in action.
+
+    @GetMapping("/search")
+    public ResponseEntity<Page<UserResponse>> searchUsers(
+            @RequestParam String type,
+            @RequestParam String query,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        Pageable pageable = PageRequest.of(page, size);
+
+        Page<UserResponse> results = userSearchService.search(type, query, pageable)
+                .map(UserResponse::fromEntity);
+
+        return ResponseEntity.ok(results);
+    }
+
     // ==================== UPDATE ====================
     // PUT /api/users/1
 
     @PutMapping("/{id}")
-    public ResponseEntity<UserResponse> updateUser(
+    public ResponseEntity<ApiResponse<UserResponse>> updateUser(
             @PathVariable Long id,
             @Valid @RequestBody UpdateUserRequest request) {
 
@@ -118,7 +146,7 @@ public class UserController {
                 .build();
 
         User updatedUser = userService.updateUser(id, updatedData);
-        return ResponseEntity.ok(UserResponse.fromEntity(updatedUser));
+        return ResponseEntity.ok(ApiResponse.success("User updated successfully", UserResponse.fromEntity(updatedUser)));
     }
 
     // ==================== DELETE ====================
@@ -128,8 +156,8 @@ public class UserController {
     //   The standard response for a successful delete.
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Void>> deleteUser(@PathVariable Long id) {
         userService.deleteUser(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ApiResponse.success("User deleted successfully", null));
     }
 }
