@@ -1,0 +1,235 @@
+# Full-stack Docker Compose — runs ALL services + ALL infrastructure.
+# This is how the platform runs in production — everything in containers.
+#
+# Start:  docker compose up -d --build
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+# Rebuild one service: docker compose up -d --build user-service
+#
+# IMPORTANT: Inside Docker, services communicate using CONTAINER NAMES, not localhost.
+# For example, user-service connects to "postgres-users:5432" (not "localhost:5432").
+# The "ports" section maps container ports to your host machine for external access.
+
+services:
+
+  # ==========================================
+  # DATABASES — one per service (database-per-service pattern)
+  # ==========================================
+
+  postgres-users:
+    image: postgres:16
+    container_name: postgres-users
+    environment:
+      POSTGRES_DB: users_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_users_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-products:
+    image: postgres:16
+    container_name: postgres-products
+    environment:
+      POSTGRES_DB: products_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_products_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d products_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-orders:
+    image: postgres:16
+    container_name: postgres-orders
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_orders_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d orders_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-payments:
+    image: postgres:16
+    container_name: postgres-payments
+    environment:
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_payments_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d payments_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # pgAdmin — Database management UI
+  # ==========================================
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres-users:
+        condition: service_healthy
+      postgres-products:
+        condition: service_healthy
+      postgres-orders:
+        condition: service_healthy
+      postgres-payments:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  # ==========================================
+  # MICROSERVICES — the application layer
+  # ==========================================
+
+  # ---------- User Service (port 8081, HTTPS) ----------
+  # Handles: registration, login, JWT auth, user management
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    ports:
+      - "8081:8081"
+    environment:
+      # Database — points to the postgres-users CONTAINER, not localhost.
+      # Inside Docker, containers talk to each other by container name.
+      DB_URL: jdbc:postgresql://postgres-users:5432/users_db
+      DB_USERNAME: admin
+      DB_PASSWORD: admin123
+      # SSL keystore password (self-signed cert bundled in the JAR)
+      SSL_KEYSTORE_PASSWORD: changeit
+      # JWT secret (in production, use a strong random key from a secrets manager)
+      JWT_SECRET: my-super-secret-key-that-is-at-least-32-characters-long
+      # Disable SQL logging in Docker (too noisy)
+      SPRING_JPA_SHOW_SQL: "false"
+    depends_on:
+      postgres-users:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk https://localhost:8081/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------- Product Service (port 8082) ----------
+  # Handles: products, categories, inventory, stock management
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    ports:
+      - "8082:8082"
+    environment:
+      DB_URL: jdbc:postgresql://postgres-products:5432/products_db
+      DB_USERNAME: admin
+      DB_PASSWORD: admin123
+      SPRING_JPA_SHOW_SQL: "false"
+    depends_on:
+      postgres-products:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------- Payment Service (port 8084) ----------
+  # Handles: payment processing, gateways (Stripe/PayPal/Bank), refunds, transaction history
+  # Started BEFORE order-service because order-service calls payment-service.
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    ports:
+      - "8084:8084"
+    environment:
+      DB_URL: jdbc:postgresql://postgres-payments:5432/payments_db
+      DB_USERNAME: admin
+      DB_PASSWORD: admin123
+      SPRING_JPA_SHOW_SQL: "false"
+    depends_on:
+      postgres-payments:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8084/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ---------- Order Service (port 8083) ----------
+  # Handles: order creation, cancellation, status history
+  # Calls: user-service, product-service, payment-service
+  # Started LAST because it depends on all other services.
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports:
+      - "8083:8083"
+    environment:
+      DB_URL: jdbc:postgresql://postgres-orders:5432/orders_db
+      DB_USERNAME: admin
+      DB_PASSWORD: admin123
+      # Inter-service URLs — use CONTAINER NAMES inside Docker.
+      # user-service uses HTTPS (self-signed cert), others use HTTP.
+      USER_SERVICE_URL: https://user-service:8081
+      PRODUCT_SERVICE_URL: http://product-service:8082
+      PAYMENT_SERVICE_URL: http://payment-service:8084
+      SPRING_JPA_SHOW_SQL: "false"
+    depends_on:
+      postgres-orders:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+# ==========================================
+# VOLUMES — persistent data storage
+# ==========================================
+# Named volumes keep data across container restarts.
+# Without these, your databases would be empty every time you restart.
+
+volumes:
+  postgres_users_data:
+  postgres_products_data:
+  postgres_orders_data:
+  postgres_payments_data:
+  pgadmin_data:
