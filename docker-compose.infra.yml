@@ -25,6 +25,63 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==================== PostgreSQL (Products DB) ====================
+  # Separate database for product-service. Port 5436 on host.
+  postgres-products:
+    image: postgres:16
+    container_name: postgres-products
+    environment:
+      POSTGRES_DB: products_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5436:5432"                  # mapped to 5436 on host (5433 taken by another project)
+    volumes:
+      - postgres_products_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d products_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== PostgreSQL (Orders DB) ====================
+  # Separate database for order-service. Port 5434.
+  postgres-orders:
+    image: postgres:16
+    container_name: postgres-orders
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_orders_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d orders_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== PostgreSQL (Payments DB) ====================
+  # Separate database for payment-service. Port 5435.
+  postgres-payments:
+    image: postgres:16
+    container_name: postgres-payments
+    environment:
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_payments_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d payments_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ==================== pgAdmin (Database UI) ====================
   # A web-based GUI to view and manage your PostgreSQL databases.
   # Access at: http://localhost:5050
@@ -38,7 +95,13 @@ services:
       - "5050:80"                    # pgAdmin runs on port 80 inside container, we map it to 5050
     depends_on:
       postgres-users:
-        condition: service_healthy   # wait until PostgreSQL is actually ready
+        condition: service_healthy
+      postgres-products:
+        condition: service_healthy
+      postgres-orders:
+        condition: service_healthy
+      postgres-payments:
+        condition: service_healthy
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
@@ -47,4 +110,7 @@ services:
 # Without volumes, your database would be empty every time you restart.
 volumes:
   postgres_users_data:
+  postgres_products_data:
+  postgres_orders_data:
+  postgres_payments_data:
   pgadmin_data:
