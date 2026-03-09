@@ -11,11 +11,13 @@ import com.ecommerce.orderservice.model.OrderStatusHistory;
 import com.ecommerce.orderservice.repository.OrderRepository;
 import com.ecommerce.orderservice.repository.OrderStatusHistoryRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -24,6 +26,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 // OrderService — the most complex service because it orchestrates multiple microservices.
 //
@@ -49,6 +52,8 @@ public class OrderService {
     private final WebClient userServiceClient;
     private final WebClient productServiceClient;
     private final WebClient paymentServiceClient;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     // ==================== CREATE ORDER ====================
 
@@ -146,7 +151,27 @@ public class OrderService {
             log.error("Payment initiation failed for order {}: {}", order.getId(), e.getMessage());
         }
 
+        // Publish OrderPlacedEvent to Kafka — notification-service will pick it up
+        publishOrderPlacedEvent(order);
+
         return order;
+    }
+
+    private void publishOrderPlacedEvent(Order order) {
+        try {
+            Map<String, Object> event = Map.of(
+                    "orderId", order.getId(),
+                    "userId", order.getUserId(),
+                    "totalAmount", order.getTotalAmount(),
+                    "status", order.getStatus().name(),
+                    "itemCount", order.getItems().size()
+            );
+            String eventJson = objectMapper.writeValueAsString(event);
+            kafkaTemplate.send("order-events", "order-" + order.getId(), eventJson);
+            log.info("Published OrderPlacedEvent for order {} to Kafka", order.getId());
+        } catch (Exception e) {
+            log.error("Failed to publish OrderPlacedEvent for order {}: {}", order.getId(), e.getMessage());
+        }
     }
 
     // ==================== READ ====================

@@ -105,6 +105,81 @@ services:
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
+  # ==================== Zookeeper ====================
+  # Zookeeper is Kafka's "manager" — it keeps track of which Kafka brokers are alive,
+  # which topics exist, and who is the leader for each partition.
+  # Think of it as the air traffic controller for Kafka.
+  # Note: Newer Kafka versions (3.5+) can run WITHOUT Zookeeper (KRaft mode),
+  # but the Confluent images we use still require it.
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181           # port Kafka uses to talk to Zookeeper
+      ZOOKEEPER_TICK_TIME: 2000             # heartbeat interval (ms) — how often Zookeeper checks if Kafka is alive
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc localhost 2181 | grep Mode"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Kafka ====================
+  # Kafka is the message broker — it receives messages from producers (our services)
+  # and delivers them to consumers (notification-service).
+  #
+  # Key concepts:
+  #   - Topic: a named channel (e.g., "user-events", "order-events")
+  #   - Producer: publishes messages to a topic
+  #   - Consumer: reads messages from a topic
+  #   - Partition: a topic is split into partitions for parallel processing
+  #   - Offset: the position of a message within a partition (like a bookmark)
+  #
+  # Messages are PERSISTED on disk — even if notification-service is down,
+  # messages wait in Kafka until it comes back up. This is the key advantage
+  # over direct HTTP calls.
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1                                           # unique ID for this broker
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181                      # where to find Zookeeper
+      # Two listeners: one for apps running on your HOST machine (localhost:9092),
+      # one for apps running INSIDE Docker (kafka:29092).
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1                    # only 1 broker, so replication = 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1                       # minimum in-sync replicas
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1            # same reason — single broker
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ==================== Kafka UI ====================
+  # A web-based dashboard to see your Kafka topics, messages, consumers, and more.
+  # Like pgAdmin but for Kafka. Access at: http://localhost:8090
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local                                 # display name in the UI
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092               # internal Docker listener
+    ports:
+      - "8090:8080"                                                # Kafka UI runs on 8080 inside, we map to 8090
+
 # ==================== VOLUMES ====================
 # Named volumes persist data even if you stop/remove containers.
 # Without volumes, your database would be empty every time you restart.

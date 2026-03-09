@@ -9,14 +9,17 @@ import com.ecommerce.paymentservice.gateway.PaymentGatewayFactory;
 import com.ecommerce.paymentservice.model.*;
 import com.ecommerce.paymentservice.repository.PaymentRepository;
 import com.ecommerce.paymentservice.repository.PaymentTransactionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 // PaymentService — now uses the Strategy pattern for gateway selection
 // and Resilience4j @Retry for automatic retry with exponential backoff.
@@ -37,6 +40,8 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository transactionRepository;
     private final PaymentGatewayFactory gatewayFactory;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     // ==================== PROCESS PAYMENT ====================
 
@@ -84,7 +89,12 @@ public class PaymentService {
                     request.getOrderId(), response.message());
         }
 
-        return paymentRepository.save(payment);
+        payment = paymentRepository.save(payment);
+
+        // Publish PaymentProcessedEvent to Kafka
+        publishPaymentEvent(payment);
+
+        return payment;
     }
 
     // Charge with retry — tries the gateway up to 3 times.
@@ -207,6 +217,9 @@ public class PaymentService {
             payment = paymentRepository.save(payment);
             log.info("Payment refunded: id={}, orderId={}, amount={}",
                     payment.getId(), payment.getOrderId(), payment.getAmount());
+
+            // Publish refund event to Kafka
+            publishPaymentEvent(payment);
         } else {
             throw new PaymentException("Refund failed: " + response.message());
         }
@@ -235,6 +248,26 @@ public class PaymentService {
                 .build();
 
         transactionRepository.save(transaction);
+    }
+
+    private void publishPaymentEvent(Payment payment) {
+        try {
+            Map<String, Object> event = Map.of(
+                    "paymentId", payment.getId(),
+                    "orderId", payment.getOrderId(),
+                    "userId", payment.getUserId(),
+                    "amount", payment.getAmount(),
+                    "status", payment.getStatus().name(),
+                    "paymentMethod", payment.getPaymentMethod().name(),
+                    "transactionId", payment.getTransactionId() != null ? payment.getTransactionId() : ""
+            );
+            String eventJson = objectMapper.writeValueAsString(event);
+            kafkaTemplate.send("payment-events", "payment-" + payment.getId(), eventJson);
+            log.info("Published PaymentProcessedEvent for payment {} to Kafka", payment.getId());
+        } catch (Exception e) {
+            log.error("Failed to publish PaymentProcessedEvent for payment {}: {}",
+                    payment.getId(), e.getMessage());
+        }
     }
 
     private PaymentMethod parsePaymentMethod(String method) {

@@ -195,10 +195,12 @@ class UserControllerIntegrationTest {
         }
 
         @Test
-        @DisplayName("should return 403 when not authenticated")
-        void shouldReturn403WhenNotAuthenticated() throws Exception {
+        @DisplayName("should allow unauthenticated access to GET /api/users/{id} (inter-service)")
+        void shouldAllowUnauthenticatedGetUserById() throws Exception {
+            // GET /api/users/{id} is permitted without auth for inter-service communication.
+            // Returns 404 because user with ID 1 doesn't exist in the test DB.
             mockMvc.perform(get("/api/users/1"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isNotFound());
         }
     }
 

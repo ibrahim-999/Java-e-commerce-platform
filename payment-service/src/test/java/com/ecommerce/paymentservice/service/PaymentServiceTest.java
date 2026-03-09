@@ -8,13 +8,16 @@ import com.ecommerce.paymentservice.gateway.*;
 import com.ecommerce.paymentservice.model.*;
 import com.ecommerce.paymentservice.repository.PaymentRepository;
 import com.ecommerce.paymentservice.repository.PaymentTransactionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -36,6 +39,12 @@ class PaymentServiceTest {
 
     @Mock
     private PaymentGatewayFactory gatewayFactory;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private PaymentService paymentService;

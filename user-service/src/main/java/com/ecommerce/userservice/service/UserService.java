@@ -7,7 +7,10 @@ import com.ecommerce.userservice.model.User;
 import com.ecommerce.userservice.model.UserStatus;
 import com.ecommerce.userservice.repository.RoleRepository;
 import com.ecommerce.userservice.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +19,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 // @Service — tells Spring "this class contains business logic".
@@ -30,6 +34,7 @@ import java.util.Set;
 //   3. Spring sees the constructor and automatically passes in the matching beans
 //
 // This replaces the old @Autowired approach and is the recommended way.
+@Slf4j
 @RequiredArgsConstructor
 public class UserService {
 
@@ -38,6 +43,14 @@ public class UserService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+
+    // KafkaTemplate is Spring Kafka's main class for sending messages.
+    // It works like RestTemplate/WebClient but for Kafka instead of HTTP.
+    //   kafkaTemplate.send("topic-name", key, value)
+    // The key determines which PARTITION the message goes to (same key = same partition = ordered).
+    // The value is the actual message content (our event as JSON).
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     // ==================== CREATE ====================
 
@@ -67,7 +80,44 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("Role", "name", "ROLE_CUSTOMER"));
         user.setRoles(Set.of(customerRole));
 
-        return userRepository.save(user);
+        User savedUser = userRepository.save(user);
+
+        // Publish a UserRegisteredEvent to Kafka.
+        // This is FIRE-AND-FORGET — if Kafka is down, we log the error but DON'T
+        // fail the registration. The user is already saved in the database.
+        // Why? Registration is the PRIMARY operation. Notification is SECONDARY.
+        // The user shouldn't see "Registration failed" just because Kafka is down.
+        publishUserRegisteredEvent(savedUser);
+
+        return savedUser;
+    }
+
+    // Publishes an event to the "user-events" Kafka topic.
+    // The event contains only the data notification-service needs — no passwords, no roles.
+    //
+    // kafkaTemplate.send(topic, key, value):
+    //   - topic: "user-events" — the channel name
+    //   - key: "user-{id}" — messages with the same key go to the same partition
+    //     (ensures events for the same user are processed in order)
+    //   - value: JSON string of the event data
+    private void publishUserRegisteredEvent(User user) {
+        try {
+            Map<String, Object> event = Map.of(
+                    "userId", user.getId(),
+                    "email", user.getEmail(),
+                    "firstName", user.getFirstName(),
+                    "lastName", user.getLastName()
+            );
+            String eventJson = objectMapper.writeValueAsString(event);
+            kafkaTemplate.send("user-events", "user-" + user.getId(), eventJson);
+            log.info("Published UserRegisteredEvent for user {} to Kafka", user.getId());
+        } catch (Exception e) {
+            // Don't fail registration if Kafka is down — just log the error.
+            // In production, you'd use an outbox pattern or transactional outbox
+            // to guarantee event delivery.
+            log.error("Failed to publish UserRegisteredEvent for user {}: {}",
+                    user.getId(), e.getMessage());
+        }
     }
 
     // ==================== READ ====================

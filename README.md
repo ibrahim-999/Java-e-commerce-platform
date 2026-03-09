@@ -2,7 +2,7 @@
 
 A production-grade microservices e-commerce platform built with Java 21 and Spring Boot 3.4.
 
-Four independent services communicate over REST, each with its own PostgreSQL database, Flyway migrations, and comprehensive test suite.
+Five independent services communicate over REST and Kafka, each with its own PostgreSQL database (where applicable), Flyway migrations, and comprehensive test suite.
 
 ---
 
@@ -18,30 +18,46 @@ Four independent services communicate over REST, each with its own PostgreSQL da
           ▼                     ▼                      ▼
   ┌───────────────┐   ┌────────────────┐   ┌──────────────────┐
   │ user-service  │   │product-service │   │ payment-service  │
-  │   :8081 (HTTPS)│   │    :8082      │   │     :8084        │
+  │  :8081 (HTTPS)│   │    :8082      │   │     :8084        │
   │               │   │               │   │                  │
   │ Registration  │   │ Products      │   │ Stripe gateway   │
   │ Login (JWT)   │   │ Categories    │   │ PayPal gateway   │
   │ User mgmt    │   │ Inventory     │   │ Bank gateway     │
   │ Role-based    │   │ Stock ops     │   │ Retry + backoff  │
   │ access ctrl   │   │ Price stats   │   │ Transaction log  │
-  └───────┬───────┘   └───────┬───────┘   └────────┬─────────┘
-          │                   │                     │
-          │           ┌───────┴─────────────────────┘
-          │           │
-          ▼           ▼
-  ┌───────────────────────────┐
-  │      order-service        │
-  │         :8083             │
-  │                           │
-  │ Validates user  ──────► user-service
-  │ Reserves stock  ──────► product-service
-  │ Processes payment ────► payment-service
-  │                           │
-  │ Circuit Breaker (Resilience4j)
-  │ Compensating transactions │
-  │ Order status history      │
-  └───────────────────────────┘
+  └───┬───────┬───┘   └───────┬───────┘   └───┬──────────┬───┘
+      │       │               │                │          │
+      │       │       ┌───────┴────────────────┘          │
+      │       │       │                                   │
+      │       ▼       ▼                                   │
+      │  ┌───────────────────────────┐                    │
+      │  │      order-service        │                    │
+      │  │         :8083             │                    │
+      │  │                           │                    │
+      │  │ Validates user  ──────► user-service           │
+      │  │ Reserves stock  ──────► product-service        │
+      │  │ Processes payment ────► payment-service        │
+      │  │                           │                    │
+      │  │ Circuit Breaker (Resilience4j)                 │
+      │  │ Compensating transactions │                    │
+      │  └───────────┬───────────────┘                    │
+      │              │                                    │
+      │    Kafka Events (async)                           │
+      ▼              ▼                                    ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │                  Apache Kafka :9092                       │
+  │  Topics: user-events | order-events | payment-events     │
+  └──────────────────────────┬───────────────────────────────┘
+                             │
+                             ▼
+                 ┌──────────────────────┐
+                 │notification-service  │
+                 │       :8085          │
+                 │                      │
+                 │ Consumes all events  │
+                 │ Sends notifications  │
+                 │ Dead Letter Topics   │
+                 └──────────────────────┘
 ```
 
 Each service owns its own database (database-per-service pattern):
@@ -52,6 +68,7 @@ Each service owns its own database (database-per-service pattern):
 | product-service | `products_db` | 5436 |
 | order-service | `orders_db` | 5434 |
 | payment-service | `payments_db` | 5435 |
+| notification-service | None (Kafka only) | — |
 
 ---
 
@@ -65,6 +82,7 @@ Each service owns its own database (database-per-service pattern):
 | Database | PostgreSQL 16 |
 | ORM | Spring Data JPA / Hibernate |
 | Migrations | Flyway |
+| Messaging | Apache Kafka (Spring Kafka) |
 | HTTP Client | WebClient (Spring WebFlux) |
 | Resilience | Resilience4j (Circuit Breaker + Retry) |
 | Testing | JUnit 5, Mockito, MockMvc, AssertJ |
@@ -87,7 +105,7 @@ Each service owns its own database (database-per-service pattern):
 Run databases in Docker, services locally:
 
 ```bash
-# Start infrastructure (4 PostgreSQL databases + pgAdmin)
+# Start infrastructure (4 PostgreSQL databases + pgAdmin + Kafka + Zookeeper)
 make infra-up
 
 # Run each service in a separate terminal
@@ -95,6 +113,7 @@ cd user-service && mvn spring-boot:run
 cd product-service && mvn spring-boot:run
 cd order-service && mvn spring-boot:run
 cd payment-service && mvn spring-boot:run
+cd notification-service && mvn spring-boot:run
 ```
 
 ### Option 2: Full Docker stack
@@ -102,7 +121,7 @@ cd payment-service && mvn spring-boot:run
 Everything runs in containers:
 
 ```bash
-# Build and start all 9 containers
+# Build and start all 13 containers (5 services + 4 DBs + pgAdmin + Kafka + Zookeeper + Kafka UI)
 make up
 
 # Check status
@@ -124,8 +143,11 @@ curl -s  http://localhost:8082/api/status          # product-service
 curl -s  http://localhost:8083/api/orders          # order-service
 curl -s  http://localhost:8084/api/health          # payment-service
 
-# pgAdmin UI
-open http://localhost:5050                         # admin@admin.com / admin123
+curl -s  http://localhost:8085/api/health            # notification-service
+
+# Web UIs
+open http://localhost:5050                         # pgAdmin (admin@admin.com / admin123)
+open http://localhost:8090                         # Kafka UI
 ```
 
 ---
@@ -224,14 +246,15 @@ curl -s -X PUT http://localhost:8083/api/orders/1/cancel
 ## Testing
 
 ```bash
-# Run all tests (87 total across all services)
+# Run all tests (98 total across all services)
 make test-all
 
 # Run tests for a specific service
-cd user-service && mvn test       # 27 tests
-cd product-service && mvn test    # 25 tests
-cd order-service && mvn test      #  7 tests
-cd payment-service && mvn test    # 28 tests
+cd user-service && mvn test          # 27 tests
+cd product-service && mvn test       # 25 tests
+cd order-service && mvn test         #  7 tests
+cd payment-service && mvn test       # 28 tests
+cd notification-service && mvn test  # 11 tests
 ```
 
 Tests require infrastructure running (`make infra-up`).
@@ -293,8 +316,15 @@ ecommerce-platform/
 │   ├── PAYMENT_ARCHITECTURE.md      # Retry logic, gateway patterns, audit trails
 │   └── Dockerfile
 │
-├── docker-compose.yml               # Full stack (services + infrastructure)
-├── docker-compose.infra.yml         # Infrastructure only (databases + pgAdmin)
+├── notification-service/                # Kafka event consumer
+│   ├── src/main/java/.../
+│   │   ├── config/                  # Health endpoint
+│   │   ├── consumer/                # Kafka listeners (user, order, payment events)
+│   │   └── event/                   # Event DTOs
+│   └── Dockerfile
+│
+├── docker-compose.yml               # Full stack (services + Kafka + infrastructure)
+├── docker-compose.infra.yml         # Infrastructure only (databases + pgAdmin + Kafka)
 ├── Makefile                         # Build, test, and deployment commands
 ├── .env.example                     # Environment variable template
 └── .gitignore
@@ -324,6 +354,8 @@ Each service has a dedicated architecture document explaining production concern
 | **Repository** | Spring Data JPA repositories | Abstracts database access behind interfaces |
 | **Circuit Breaker** | order-service inter-service calls | Prevents cascading failures when a service is down |
 | **Compensating Transaction** | Order creation rollback | Restores stock if payment or product validation fails mid-order |
+| **Event-Driven** | Kafka producers + notification-service | Async notifications without coupling services |
+| **Dead Letter Queue** | Kafka DLT topics | Failed messages saved for manual investigation |
 
 ---
 
@@ -344,7 +376,7 @@ make rebuild s=<svc>  # Rebuild one service (e.g., make rebuild s=user-service)
 
 # ── Build & Test ──
 make build-all        # Package all services as JARs
-make test-all         # Run all 87 tests
+make test-all         # Run all 98 tests
 make clean-all        # Remove build artifacts
 
 # ── SSL ──
@@ -367,5 +399,6 @@ Copy `.env.example` to `.env` and fill in values for local development:
 | `USER_SERVICE_URL` | `https://localhost:8081` | order-service |
 | `PRODUCT_SERVICE_URL` | `http://localhost:8082` | order-service |
 | `PAYMENT_SERVICE_URL` | `http://localhost:8084` | order-service |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | user, order, payment, notification |
 
 In Docker, these are set automatically via `docker-compose.yml` using container names.

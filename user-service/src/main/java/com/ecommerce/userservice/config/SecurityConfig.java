@@ -53,6 +53,11 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/**").permitAll()          // monitoring
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()  // swagger
 
+                        // Inter-service endpoint — other microservices call this to validate users.
+                        // In production, this would be secured via API gateway or service mesh,
+                        // not exposed publicly. For our learning project, we permit it.
+                        .requestMatchers(HttpMethod.GET, "/api/users/{id}").permitAll()
+
                         // Admin-only endpoints
                         .requestMatchers(HttpMethod.GET, "/api/users").hasRole("ADMIN")     // list all users
                         .requestMatchers(HttpMethod.DELETE, "/api/users/**").hasRole("ADMIN") // delete users

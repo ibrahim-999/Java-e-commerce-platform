@@ -90,6 +90,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- spring-kafka: Kafka producer/consumer support.
+             user-service uses this as a PRODUCER — publishes UserRegisteredEvent
+             when a new user signs up. notification-service consumes these events. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- spring-security-test: testing utilities for security (login mocking, etc.) -->
         <dependency>
             <groupId>org.springframework.security</groupId>
