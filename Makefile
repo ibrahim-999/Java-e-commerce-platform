@@ -25,10 +25,11 @@ build-all: ## Build all services (compile + package JAR)
 	cd notification-service && mvn clean package -DskipTests
 
 test-all: ## Run tests for all services (requires: make infra-up)
-	cd user-service && mvn test
-	cd product-service && mvn test
-	cd order-service && mvn test
-	cd payment-service && mvn test
+	set -a; source .env; set +a; \
+	cd user-service && mvn test && cd .. && \
+	cd product-service && mvn test && cd .. && \
+	cd order-service && mvn test && cd .. && \
+	cd payment-service && mvn test && cd .. && \
 	cd notification-service && mvn test
 
 clean-all: ## Clean build artifacts for all services
@@ -45,15 +46,20 @@ clean-all: ## Clean build artifacts for all services
 # These are the platform services that other services depend on.
 # Start order: discovery-server → config-server → gateway
 # Requires: make infra-up (databases + Kafka + Zipkin must be running first)
+#
+# Each command loads .env for secrets (EUREKA_USERNAME, EUREKA_PASSWORD, etc.)
+# "set -a" exports all variables so child processes (mvn) inherit them.
+
+ENV_LOAD = set -a; source $(CURDIR)/.env; set +a;
 
 run-discovery: ## Run discovery-server (Eureka) in a new terminal
-	gnome-terminal --title="discovery-server :8761" -- bash -c "cd $(CURDIR)/discovery-server && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="discovery-server :8761" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/discovery-server && mvn spring-boot:run; exec bash"
 
 run-config: ## Run config-server in a new terminal
-	gnome-terminal --title="config-server :8888" -- bash -c "cd $(CURDIR)/config-server && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="config-server :8888" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/config-server && mvn spring-boot:run; exec bash"
 
 run-gateway: ## Run api-gateway in a new terminal
-	gnome-terminal --title="api-gateway :8060" -- bash -c "cd $(CURDIR)/api-gateway && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="api-gateway :8060" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/api-gateway && mvn spring-boot:run; exec bash"
 
 # ==================== RUN BUSINESS SERVICES ====================
 # Each command opens the service in a NEW terminal window.
@@ -63,19 +69,19 @@ run-gateway: ## Run api-gateway in a new terminal
 #         make run-all          (opens ALL services, each in its own terminal)
 
 run-user: ## Run user-service in a new terminal
-	gnome-terminal --title="user-service :8081" -- bash -c "cd $(CURDIR)/user-service && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="user-service :8081" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/user-service && mvn spring-boot:run; exec bash"
 
 run-product: ## Run product-service in a new terminal
-	gnome-terminal --title="product-service :8082" -- bash -c "cd $(CURDIR)/product-service && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="product-service :8082" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/product-service && mvn spring-boot:run; exec bash"
 
 run-order: ## Run order-service in a new terminal
-	gnome-terminal --title="order-service :8083" -- bash -c "cd $(CURDIR)/order-service && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="order-service :8083" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/order-service && mvn spring-boot:run; exec bash"
 
 run-payment: ## Run payment-service in a new terminal
-	gnome-terminal --title="payment-service :8084" -- bash -c "cd $(CURDIR)/payment-service && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="payment-service :8084" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/payment-service && mvn spring-boot:run; exec bash"
 
 run-notification: ## Run notification-service in a new terminal
-	gnome-terminal --title="notification-service :8085" -- bash -c "cd $(CURDIR)/notification-service && mvn spring-boot:run; exec bash"
+	gnome-terminal --title="notification-service :8085" -- bash -c "$(ENV_LOAD) cd $(CURDIR)/notification-service && mvn spring-boot:run; exec bash"
 
 run-all: ## Run ALL services, each in its own terminal
 	@echo "Starting all services in separate terminals..."
