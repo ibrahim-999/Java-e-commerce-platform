@@ -3,7 +3,6 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
          https://maven.apache.org/xsd/maven-4.0.0.xsd">
-
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -14,10 +13,10 @@
     </parent>
 
     <groupId>com.ecommerce</groupId>
-    <artifactId>payment-service</artifactId>
+    <artifactId>api-gateway</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>payment-service</name>
-    <description>Payment microservice for the e-commerce platform</description>
+    <name>api-gateway</name>
+    <description>API Gateway — single entry point for all microservices</description>
 
     <properties>
         <java.version>21</java.version>
@@ -37,10 +36,45 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Spring Cloud Gateway — the API Gateway framework.
+             IMPORTANT: This uses Spring WebFlux (reactive), NOT Spring MVC.
+             That means it's non-blocking and event-driven under the hood.
+             You cannot mix spring-boot-starter-web with this — they conflict.
+
+             What the gateway does:
+             1. Receives ALL incoming requests on a single port (8080)
+             2. Looks at the URL path to decide which service to route to
+             3. Forwards the request to the correct service
+             4. Returns the response back to the client
+
+             Example:
+               Client → GET /api/users/1 → Gateway → user-service:8081/api/users/1
+               Client → POST /api/orders → Gateway → order-service:8083/api/orders -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway</artifactId>
         </dependency>
+
+        <!-- Eureka Client — the gateway registers with Eureka AND uses it
+             to discover service locations. Instead of hardcoding URLs like
+             "http://localhost:8081", the gateway asks Eureka:
+             "Where is user-service?" and gets the actual address back.
+             This is called CLIENT-SIDE SERVICE DISCOVERY. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <!-- Config Client — fetches configuration from the Config Server on startup.
+             Instead of reading only local application.properties, the service also
+             pulls config from http://config-server:8888/{service-name}/default.
+             Local properties override remote ones, so you can still customize locally. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
+        <!-- Actuator — health checks and metrics for the gateway itself -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
@@ -67,78 +101,17 @@
             <artifactId>zipkin-reporter-brave</artifactId>
         </dependency>
 
+        <!-- Circuit Breaker — if a downstream service is down, the gateway
+             can fail fast instead of hanging. Uses Resilience4j under the hood. -->
         <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.8.5</version>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-reactor-resilience4j</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-database-postgresql</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <scope>provided</scope>
-        </dependency>
-        <!-- Spring Kafka: publishes PaymentProcessedEvent after payment -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
-
-        <!-- Resilience4j — retry with exponential backoff for gateway calls -->
-        <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-spring-boot3</artifactId>
-            <version>2.2.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.datafaker</groupId>
-            <artifactId>datafaker</artifactId>
-            <version>2.4.2</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Eureka Client — registers with discovery server -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
-        </dependency>
-
-        <!-- Config Client — fetches configuration from the Config Server on startup.
-             Instead of reading only local application.properties, the service also
-             pulls config from http://config-server:8888/{service-name}/default.
-             Local properties override remote ones, so you can still customize locally. -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-config</artifactId>
+            <optional>true</optional>
         </dependency>
     </dependencies>
 

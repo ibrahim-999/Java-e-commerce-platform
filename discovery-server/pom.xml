@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.3</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.ecommerce</groupId>
+    <artifactId>discovery-server</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>discovery-server</name>
+    <description>Eureka Service Discovery Server</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <!-- Spring Cloud version compatible with Spring Boot 3.4.x -->
+        <spring-cloud.version>2024.0.0</spring-cloud.version>
+    </properties>
+
+    <!-- Spring Cloud BOM (Bill of Materials) — manages versions of ALL Spring Cloud
+         dependencies so they're guaranteed compatible with each other.
+         Without this, you'd have to manually match versions (and risk conflicts). -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Eureka Server — turns this app into a service registry.
+             Other services register here on startup ("I'm user-service at 192.168.1.5:8081").
+             When a service needs to call another, it asks Eureka: "Where is user-service?"
+             Eureka replies with the actual address. This is SERVICE DISCOVERY.
+
+             Why is this useful?
+             - Services can have dynamic IPs (especially in Docker/Kubernetes)
+             - You can run multiple instances of a service (load balancing)
+             - No more hardcoded URLs like "http://localhost:8081" -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
+        </dependency>
+
+        <!-- Spring Security — we protect the Eureka dashboard with basic auth.
+             Without this, anyone who knows the URL can see all your services. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

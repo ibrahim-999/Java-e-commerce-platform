@@ -5,6 +5,7 @@
 .PHONY: help build build-all test test-all clean clean-all generate-cert \
        infra-up infra-down infra-logs infra-status infra-restart infra-clean \
        up down logs status restart rebuild \
+       run-discovery run-config run-gateway \
        run-user run-product run-order run-payment run-notification run-all stop-all
 
 # ==================== HELP ====================
@@ -14,6 +15,9 @@ help: ## Show this help message
 
 # ==================== BUILD & TEST (all services) ====================
 build-all: ## Build all services (compile + package JAR)
+	cd discovery-server && mvn clean package -DskipTests
+	cd config-server && mvn clean package -DskipTests
+	cd api-gateway && mvn clean package -DskipTests
 	cd user-service && mvn clean package -DskipTests
 	cd product-service && mvn clean package -DskipTests
 	cd order-service && mvn clean package -DskipTests
@@ -28,13 +32,30 @@ test-all: ## Run tests for all services (requires: make infra-up)
 	cd notification-service && mvn test
 
 clean-all: ## Clean build artifacts for all services
+	cd discovery-server && mvn clean
+	cd config-server && mvn clean
+	cd api-gateway && mvn clean
 	cd user-service && mvn clean
 	cd product-service && mvn clean
 	cd order-service && mvn clean
 	cd payment-service && mvn clean
 	cd notification-service && mvn clean
 
-# ==================== RUN INDIVIDUAL SERVICES ====================
+# ==================== RUN INFRASTRUCTURE SERVICES ====================
+# These are the platform services that other services depend on.
+# Start order: discovery-server → config-server → gateway
+# Requires: make infra-up (databases + Kafka + Zipkin must be running first)
+
+run-discovery: ## Run discovery-server (Eureka) in a new terminal
+	gnome-terminal --title="discovery-server :8761" -- bash -c "cd $(CURDIR)/discovery-server && mvn spring-boot:run; exec bash"
+
+run-config: ## Run config-server in a new terminal
+	gnome-terminal --title="config-server :8888" -- bash -c "cd $(CURDIR)/config-server && mvn spring-boot:run; exec bash"
+
+run-gateway: ## Run api-gateway in a new terminal
+	gnome-terminal --title="api-gateway :8060" -- bash -c "cd $(CURDIR)/api-gateway && mvn spring-boot:run; exec bash"
+
+# ==================== RUN BUSINESS SERVICES ====================
 # Each command opens the service in a NEW terminal window.
 # Requires: make infra-up (databases + Kafka must be running first)
 #
@@ -58,13 +79,18 @@ run-notification: ## Run notification-service in a new terminal
 
 run-all: ## Run ALL services, each in its own terminal
 	@echo "Starting all services in separate terminals..."
+	$(MAKE) run-discovery
+	@sleep 10
+	$(MAKE) run-config
+	@sleep 5
+	$(MAKE) run-gateway
 	$(MAKE) run-user
 	$(MAKE) run-product
 	$(MAKE) run-payment
 	@sleep 2
 	$(MAKE) run-order
 	$(MAKE) run-notification
-	@echo "All services launched! Check the 5 terminal windows."
+	@echo "All 8 services launched! Check the terminal windows."
 
 stop-all: ## Stop all locally-running services
 	@echo "Stopping all Spring Boot services..."

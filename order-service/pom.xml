@@ -21,7 +21,20 @@
 
     <properties>
         <java.version>21</java.version>
+        <spring-cloud.version>2024.0.0</spring-cloud.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- Web: REST controllers -->
@@ -62,6 +75,27 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Micrometer Tracing with Brave — adds distributed tracing to the service.
+             Brave is the tracing library (originally from Twitter/Zipkin).
+             It automatically:
+             1. Generates a unique traceId for each incoming request
+             2. Adds the traceId to every log line via SLF4J MDC
+             3. Propagates the traceId to downstream services in HTTP headers
+             This means you can search logs for one traceId and see the
+             entire journey of a request across all services. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
+
+        <!-- Zipkin Reporter — sends trace data to a Zipkin server for visualization.
+             Zipkin provides a UI where you can see the full request timeline:
+             which services were called, how long each took, and where failures happened. -->
+        <dependency>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
         </dependency>
 
         <!-- Swagger/OpenAPI -->
@@ -114,6 +148,21 @@
             <artifactId>datafaker</artifactId>
             <version>2.4.2</version>
             <scope>test</scope>
+        </dependency>
+
+        <!-- Eureka Client — registers with discovery server -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <!-- Config Client — fetches configuration from the Config Server on startup.
+             Instead of reading only local application.properties, the service also
+             pulls config from http://config-server:8888/{service-name}/default.
+             Local properties override remote ones, so you can still customize locally. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
         </dependency>
     </dependencies>
 

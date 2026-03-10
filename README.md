@@ -2,62 +2,63 @@
 
 A production-grade microservices e-commerce platform built with Java 21 and Spring Boot 3.4.
 
-Five independent services communicate over REST and Kafka, each with its own PostgreSQL database (where applicable), Flyway migrations, and comprehensive test suite.
+Eight independent services communicate over REST and Kafka, orchestrated through an API Gateway with Eureka service discovery, centralized configuration, and distributed tracing via Zipkin.
 
 ---
 
 ## Architecture
 
 ```
-                         ┌──────────────┐
-                         │   Client     │
-                         └──────┬───────┘
+                                ┌──────────────┐
+                                │    Client    │
+                                └──────┬───────┘
+                                       │
+                              ┌────────▼────────┐
+                              │   API Gateway   │
+                              │     :8060       │
+                              │                 │
+                              │  Rate Limiting  │
+                              │  Circuit Breaker│
+                              │  Request Logging│
+                              └───┬───┬───┬───┬─┘
+                                  │   │   │   │
+         ┌────────────────────────┘   │   │   └────────────────────┐
+         │              ┌─────────────┘   └──────────┐             │
+         ▼              ▼                            ▼             ▼
+ ┌───────────────┐ ┌────────────────┐ ┌──────────────────┐ ┌──────────────┐
+ │ user-service  │ │product-service │ │  order-service   │ │payment-service│
+ │ :8081 (HTTPS) │ │    :8082      │ │     :8083        │ │    :8084     │
+ │               │ │               │ │                  │ │              │
+ │ Registration  │ │ Products      │ │ Order creation   │ │ Stripe/PayPal│
+ │ Login (JWT)   │ │ Categories    │ │ User validation  │ │ Bank gateway │
+ │ User mgmt     │ │ Inventory     │ │ Stock reservation│ │ Retry+backoff│
+ │ Role-based    │ │ Stock ops     │ │ Payment trigger  │ │ Transaction  │
+ │ access ctrl   │ │ Price stats   │ │ Circuit Breaker  │ │ audit trail  │
+ └───────┬───────┘ └───────┬───────┘ └────────┬─────────┘ └──────┬───────┘
+         │                 │                   │                  │
+         ▼                 ▼                   ▼                  ▼
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                       Apache Kafka :9092                             │
+ │       Topics: user-events | order-events | payment-events           │
+ └──────────────────────────────┬──────────────────────────────────────┘
                                 │
-          ┌─────────────────────┼─────────────────────┐
-          │                     │                      │
-          ▼                     ▼                      ▼
-  ┌───────────────┐   ┌────────────────┐   ┌──────────────────┐
-  │ user-service  │   │product-service │   │ payment-service  │
-  │  :8081 (HTTPS)│   │    :8082      │   │     :8084        │
-  │               │   │               │   │                  │
-  │ Registration  │   │ Products      │   │ Stripe gateway   │
-  │ Login (JWT)   │   │ Categories    │   │ PayPal gateway   │
-  │ User mgmt    │   │ Inventory     │   │ Bank gateway     │
-  │ Role-based    │   │ Stock ops     │   │ Retry + backoff  │
-  │ access ctrl   │   │ Price stats   │   │ Transaction log  │
-  └───┬───────┬───┘   └───────┬───────┘   └───┬──────────┬───┘
-      │       │               │                │          │
-      │       │       ┌───────┴────────────────┘          │
-      │       │       │                                   │
-      │       ▼       ▼                                   │
-      │  ┌───────────────────────────┐                    │
-      │  │      order-service        │                    │
-      │  │         :8083             │                    │
-      │  │                           │                    │
-      │  │ Validates user  ──────► user-service           │
-      │  │ Reserves stock  ──────► product-service        │
-      │  │ Processes payment ────► payment-service        │
-      │  │                           │                    │
-      │  │ Circuit Breaker (Resilience4j)                 │
-      │  │ Compensating transactions │                    │
-      │  └───────────┬───────────────┘                    │
-      │              │                                    │
-      │    Kafka Events (async)                           │
-      ▼              ▼                                    ▼
-  ┌──────────────────────────────────────────────────────────┐
-  │                  Apache Kafka :9092                       │
-  │  Topics: user-events | order-events | payment-events     │
-  └──────────────────────────┬───────────────────────────────┘
-                             │
-                             ▼
-                 ┌──────────────────────┐
-                 │notification-service  │
-                 │       :8085          │
-                 │                      │
-                 │ Consumes all events  │
-                 │ Sends notifications  │
-                 │ Dead Letter Topics   │
-                 └──────────────────────┘
+                                ▼
+                   ┌──────────────────────┐
+                   │notification-service  │
+                   │       :8085          │
+                   │                      │
+                   │ Consumes all events  │
+                   │ Sends notifications  │
+                   │ Dead Letter Topics   │
+                   └──────────────────────┘
+
+ ┌───────────────────────────────────────────────────────────────────┐
+ │                    Platform Services                              │
+ │                                                                   │
+ │  Discovery Server (Eureka) :8761  — service registry              │
+ │  Config Server :8888              — centralized configuration     │
+ │  Zipkin :9411                     — distributed tracing UI        │
+ └───────────────────────────────────────────────────────────────────┘
 ```
 
 Each service owns its own database (database-per-service pattern):
@@ -83,6 +84,10 @@ Each service owns its own database (database-per-service pattern):
 | ORM | Spring Data JPA / Hibernate |
 | Migrations | Flyway |
 | Messaging | Apache Kafka (Spring Kafka) |
+| API Gateway | Spring Cloud Gateway |
+| Service Discovery | Netflix Eureka |
+| Config Management | Spring Cloud Config |
+| Distributed Tracing | Micrometer Tracing + Zipkin |
 | HTTP Client | WebClient (Spring WebFlux) |
 | Resilience | Resilience4j (Circuit Breaker + Retry) |
 | Testing | JUnit 5, Mockito, MockMvc, AssertJ |
@@ -105,15 +110,24 @@ Each service owns its own database (database-per-service pattern):
 Run databases in Docker, services locally:
 
 ```bash
-# Start infrastructure (4 PostgreSQL databases + pgAdmin + Kafka + Zookeeper)
+# Start infrastructure (4 PostgreSQL DBs + pgAdmin + Kafka + Zookeeper + Zipkin)
 make infra-up
 
-# Run each service in a separate terminal
-cd user-service && mvn spring-boot:run
-cd product-service && mvn spring-boot:run
-cd order-service && mvn spring-boot:run
-cd payment-service && mvn spring-boot:run
-cd notification-service && mvn spring-boot:run
+# Start platform services first (each in a new terminal)
+make run-discovery    # Eureka service registry (:8761)
+# wait ~10 seconds for Eureka to start
+make run-config       # Config server (:8888)
+make run-gateway      # API Gateway (:8060)
+
+# Start business services
+make run-user         # user-service (:8081)
+make run-product      # product-service (:8082)
+make run-payment      # payment-service (:8084)
+make run-order        # order-service (:8083)
+make run-notification # notification-service (:8085)
+
+# Or start everything at once:
+make run-all
 ```
 
 ### Option 2: Full Docker stack
@@ -121,7 +135,7 @@ cd notification-service && mvn spring-boot:run
 Everything runs in containers:
 
 ```bash
-# Build and start all 13 containers (5 services + 4 DBs + pgAdmin + Kafka + Zookeeper + Kafka UI)
+# Build and start all containers
 make up
 
 # Check status
@@ -137,24 +151,29 @@ make down
 ### Verify it works
 
 ```bash
-# Health checks
-curl -sk https://localhost:8081/api/status        # user-service
-curl -s  http://localhost:8082/api/status          # product-service
-curl -s  http://localhost:8083/api/orders          # order-service
-curl -s  http://localhost:8084/api/health          # payment-service
+# All requests go through the API Gateway on port 8060
+curl -s -X POST http://localhost:8060/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"firstName":"John","lastName":"Doe","email":"john@example.com",
+       "password":"Pass12345","phoneNumber":"+201000000001"}'
 
-curl -s  http://localhost:8085/api/health            # notification-service
+curl -s http://localhost:8060/api/products        # product-service
+curl -s http://localhost:8060/api/categories       # product-service
 
 # Web UIs
-open http://localhost:5050                         # pgAdmin (admin@admin.com / admin123)
-open http://localhost:8090                         # Kafka UI
+open http://localhost:8761                        # Eureka Dashboard (eureka/eureka123)
+open http://localhost:9411                        # Zipkin Tracing UI
+open http://localhost:8090                        # Kafka UI
+open http://localhost:5050                        # pgAdmin (admin@admin.com / admin123)
 ```
 
 ---
 
 ## API Endpoints
 
-### User Service (port 8081 — HTTPS)
+All requests go through the **API Gateway** on port **8060**.
+
+### User Service (via gateway: /api/users/**, /api/auth/**)
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
@@ -167,7 +186,7 @@ open http://localhost:8090                         # Kafka UI
 | PUT | `/api/users/{id}` | Update user | Authenticated |
 | DELETE | `/api/users/{id}` | Delete user | ADMIN |
 
-### Product Service (port 8082)
+### Product Service (via gateway: /api/products/**, /api/categories/**)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -177,14 +196,11 @@ open http://localhost:8090                         # Kafka UI
 | GET | `/api/products/search?name=` | Search by name |
 | GET | `/api/products/category/{id}` | Products by category |
 | GET | `/api/products/stats` | Price statistics (AVG, MIN, MAX) |
-| GET | `/api/products/stats/category/{id}` | Category price stats |
 | PUT | `/api/products/{id}` | Update product |
 | DELETE | `/api/products/{id}` | Delete product |
-| PUT | `/api/products/{id}/stock/reduce` | Reduce stock (internal) |
-| PUT | `/api/products/{id}/stock/restore` | Restore stock (internal) |
 | GET | `/api/categories` | List all categories |
 
-### Order Service (port 8083)
+### Order Service (via gateway: /api/orders/**)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -194,7 +210,7 @@ open http://localhost:8090                         # Kafka UI
 | GET | `/api/orders/{id}/history` | Order status audit trail |
 | PUT | `/api/orders/{id}/cancel` | Cancel order (restores stock) |
 
-### Payment Service (port 8084)
+### Payment Service (via gateway: /api/payments/**)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -210,35 +226,28 @@ open http://localhost:8090                         # Kafka UI
 ## Full E2E Flow
 
 ```bash
+# All traffic goes through the API Gateway (port 8060)
+
 # 1. Register a user
-curl -sk -X POST https://localhost:8081/api/auth/register \
+curl -s -X POST http://localhost:8060/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"firstName":"John","lastName":"Doe","email":"john@example.com",
        "password":"Pass12345","phoneNumber":"+201000000001"}'
 
 # 2. Create a product
-curl -s -X POST http://localhost:8082/api/products \
+curl -s -X POST http://localhost:8060/api/products \
   -H "Content-Type: application/json" \
   -d '{"name":"MacBook Pro","description":"Laptop","price":2499.99,
        "stockQuantity":10,"sku":"MBP-001","categoryId":1}'
 
 # 3. Place an order (validates user, reserves stock, charges payment)
-curl -s -X POST http://localhost:8083/api/orders \
+curl -s -X POST http://localhost:8060/api/orders \
   -H "Content-Type: application/json" \
   -d '{"userId":1,"items":[{"productId":1,"quantity":1}],
        "paymentMethod":"CREDIT_CARD"}'
 
-# 4. Check order history
-curl -s http://localhost:8083/api/orders/1/history
-
-# 5. Check payment transaction log
-curl -s http://localhost:8084/api/payments/1/transactions
-
-# 6. Refund the payment
-curl -s -X PUT http://localhost:8084/api/payments/1/refund
-
-# 7. Cancel the order (stock is restored)
-curl -s -X PUT http://localhost:8083/api/orders/1/cancel
+# 4. Check the full trace in Zipkin
+open http://localhost:9411
 ```
 
 ---
@@ -265,82 +274,21 @@ Tests require infrastructure running (`make infra-up`).
 
 ```
 ecommerce-platform/
-├── user-service/                    # User management + JWT auth
-│   ├── src/main/java/.../
-│   │   ├── config/                  # Security, JWT filter, WebClient
-│   │   ├── controller/              # REST endpoints
-│   │   ├── dto/                     # Request/Response objects
-│   │   ├── exception/               # Custom exceptions + global handler
-│   │   ├── model/                   # JPA entities (User, Role)
-│   │   ├── repository/              # Data access layer
-│   │   ├── service/                 # Business logic
-│   │   └── search/                  # Strategy pattern for user search
-│   ├── src/main/resources/
-│   │   ├── db/migration/            # Flyway SQL migrations
-│   │   └── keystore.p12             # Self-signed SSL certificate
-│   └── Dockerfile
+├── discovery-server/               # Eureka service registry (:8761)
+├── config-server/                  # Centralized configuration (:8888)
+├── config-repo/                    # Config files served by config-server
+├── api-gateway/                    # Single entry point, routing, rate limiting (:8060)
 │
-├── product-service/                 # Product catalog + inventory
-│   ├── src/main/java/.../
-│   │   ├── controller/
-│   │   ├── dto/
-│   │   ├── exception/
-│   │   ├── model/                   # Product, Category entities
-│   │   ├── repository/
-│   │   └── service/                 # Stock ops with optimistic locking
-│   ├── PRODUCTION_CONCERNS.md       # Race conditions, caching, aggregations
-│   └── Dockerfile
+├── user-service/                   # User management + JWT auth (:8081)
+├── product-service/                # Product catalog + inventory (:8082)
+├── order-service/                  # Order orchestration (:8083)
+├── payment-service/                # Payment processing (:8084)
+├── notification-service/           # Kafka event consumer (:8085)
 │
-├── order-service/                   # Order orchestration
-│   ├── src/main/java/.../
-│   │   ├── config/                  # WebClient beans, circuit breaker
-│   │   ├── controller/
-│   │   ├── dto/
-│   │   ├── exception/
-│   │   ├── model/                   # Order, OrderItem, OrderStatusHistory
-│   │   ├── repository/
-│   │   └── service/                 # Inter-service calls, compensating txns
-│   ├── ORDER_ARCHITECTURE.md        # Status history, distributed rollback, payment integration
-│   └── Dockerfile
-│
-├── payment-service/                 # Payment processing
-│   ├── src/main/java/.../
-│   │   ├── config/
-│   │   ├── controller/
-│   │   ├── dto/
-│   │   ├── exception/
-│   │   ├── gateway/                 # Strategy pattern: Stripe, PayPal, Bank
-│   │   ├── model/                   # Payment, PaymentTransaction
-│   │   ├── repository/
-│   │   └── service/                 # Retry with exponential backoff
-│   ├── PAYMENT_ARCHITECTURE.md      # Retry logic, gateway patterns, audit trails
-│   └── Dockerfile
-│
-├── notification-service/                # Kafka event consumer
-│   ├── src/main/java/.../
-│   │   ├── config/                  # Health endpoint
-│   │   ├── consumer/                # Kafka listeners (user, order, payment events)
-│   │   └── event/                   # Event DTOs
-│   └── Dockerfile
-│
-├── docker-compose.yml               # Full stack (services + Kafka + infrastructure)
-├── docker-compose.infra.yml         # Infrastructure only (databases + pgAdmin + Kafka)
-├── Makefile                         # Build, test, and deployment commands
-├── .env.example                     # Environment variable template
-└── .gitignore
+├── docker-compose.yml              # Full stack (all services + infrastructure)
+├── docker-compose.infra.yml        # Infrastructure only (DBs + Kafka + Zipkin)
+└── Makefile                        # Build, test, and run commands
 ```
-
----
-
-## Architecture Documentation
-
-Each service has a dedicated architecture document explaining production concerns, the problems they solve, and how our solutions compare to production-scale approaches:
-
-| Document | Location | Topics |
-|----------|----------|--------|
-| [Production Concerns](product-service/PRODUCTION_CONCERNS.md) | `product-service/` | Race conditions (optimistic locking, atomic SQL), price caching, aggregate queries, scaling to millions of products |
-| [Order Architecture](order-service/ORDER_ARCHITECTURE.md) | `order-service/` | Order status audit trail, compensating transactions (distributed rollback), payment integration, price snapshotting |
-| [Payment Architecture](payment-service/PAYMENT_ARCHITECTURE.md) | `payment-service/` | Retry with exponential backoff, Strategy + Factory pattern for gateways, transaction audit trail, duplicate payment prevention |
 
 ---
 
@@ -356,6 +304,7 @@ Each service has a dedicated architecture document explaining production concern
 | **Compensating Transaction** | Order creation rollback | Restores stock if payment or product validation fails mid-order |
 | **Event-Driven** | Kafka producers + notification-service | Async notifications without coupling services |
 | **Dead Letter Queue** | Kafka DLT topics | Failed messages saved for manual investigation |
+| **Token Bucket** | API Gateway rate limiter | In-memory rate limiting per client IP |
 
 ---
 
@@ -363,16 +312,28 @@ Each service has a dedicated architecture document explaining production concern
 
 ```bash
 # ── Development ──
-make infra-up         # Start databases + pgAdmin
-make infra-down       # Stop databases
-make infra-clean      # Stop databases AND delete all data
+make infra-up         # Start databases + pgAdmin + Kafka + Zipkin
+make infra-down       # Stop infrastructure
+make infra-clean      # Stop infrastructure AND delete all data
+
+# ── Run Services ──
+make run-discovery    # Start Eureka in a new terminal
+make run-config       # Start config server in a new terminal
+make run-gateway      # Start API gateway in a new terminal
+make run-user         # Start user-service in a new terminal
+make run-product      # Start product-service in a new terminal
+make run-order        # Start order-service in a new terminal
+make run-payment      # Start payment-service in a new terminal
+make run-notification # Start notification-service in a new terminal
+make run-all          # Start ALL services (8 terminals)
+make stop-all         # Stop all locally-running services
 
 # ── Full Stack ──
-make up               # Start everything (build + run)
+make up               # Start everything in Docker (build + run)
 make down             # Stop everything
 make logs             # Follow all logs
 make status           # Container health status
-make rebuild s=<svc>  # Rebuild one service (e.g., make rebuild s=user-service)
+make rebuild s=<svc>  # Rebuild one service
 
 # ── Build & Test ──
 make build-all        # Package all services as JARs
@@ -387,18 +348,19 @@ make generate-cert    # Generate self-signed certificate for user-service
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in values for local development:
-
 | Variable | Default | Used By |
 |----------|---------|---------|
-| `DB_URL` | `jdbc:postgresql://localhost:5432/users_db` | All services |
-| `DB_USERNAME` | `admin` | All services |
-| `DB_PASSWORD` | `admin123` | All services |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/users_db` | All services with DBs |
+| `DB_USERNAME` | `admin` | All services with DBs |
+| `DB_PASSWORD` | `admin123` | All services with DBs |
 | `SSL_KEYSTORE_PASSWORD` | `changeit` | user-service |
 | `JWT_SECRET` | (32+ char secret) | user-service |
-| `USER_SERVICE_URL` | `https://localhost:8081` | order-service |
-| `PRODUCT_SERVICE_URL` | `http://localhost:8082` | order-service |
-| `PAYMENT_SERVICE_URL` | `http://localhost:8084` | order-service |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | user, order, payment, notification |
+| `EUREKA_HOST` | `localhost` | All services |
+| `EUREKA_USERNAME` | `eureka` | All services |
+| `EUREKA_PASSWORD` | `eureka123` | All services |
+| `CONFIG_SERVER_HOST` | `localhost` | All services |
+| `ZIPKIN_URL` | `http://localhost:9411/api/v2/spans` | All services |
+| `GATEWAY_PORT` | `8060` | api-gateway |
 
 In Docker, these are set automatically via `docker-compose.yml` using container names.

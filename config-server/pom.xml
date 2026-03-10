@@ -3,7 +3,6 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
          https://maven.apache.org/xsd/maven-4.0.0.xsd">
-
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -14,16 +13,17 @@
     </parent>
 
     <groupId>com.ecommerce</groupId>
-    <artifactId>notification-service</artifactId>
+    <artifactId>config-server</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>notification-service</name>
-    <description>Notification microservice — consumes Kafka events and sends notifications</description>
+    <name>config-server</name>
+    <description>Centralized Configuration Server — serves configuration to all microservices</description>
 
     <properties>
         <java.version>21</java.version>
         <spring-cloud.version>2024.0.0</spring-cloud.version>
     </properties>
 
+    <!-- Spring Cloud BOM — manages Spring Cloud dependency versions -->
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -37,25 +37,27 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- Spring Boot Web — for health endpoint and actuator -->
+        <!-- Spring Cloud Config Server — the core library that turns this app
+             into a configuration server. It exposes REST endpoints like:
+               GET /user-service/default   → returns user-service config
+               GET /order-service/dev      → returns order-service dev config
+
+             Other services (config clients) call these endpoints on startup
+             to fetch their configuration BEFORE initializing beans. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-config-server</artifactId>
         </dependency>
 
-        <!-- Spring Kafka — Kafka consumer/producer support -->
-        <!-- This is the CORE dependency for this service.
-             It provides:
-               - @KafkaListener: annotation to consume messages from topics
-               - KafkaTemplate: class to send messages to topics
-               - Auto-configuration: reads kafka.* properties and sets up connections
-               - Serialization/Deserialization: converts Java objects to/from Kafka messages -->
+        <!-- Eureka Client — register with Eureka so services can find
+             the config server by name ("config-server") instead of hardcoding
+             its URL. This means the config server itself is discoverable. -->
         <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
 
-        <!-- Actuator — health checks -->
+        <!-- Actuator — health check endpoints -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
@@ -81,40 +83,6 @@
             <groupId>io.zipkin.reporter2</groupId>
             <artifactId>zipkin-reporter-brave</artifactId>
         </dependency>
-
-        <!-- Lombok — reduces boilerplate -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- Test dependencies -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Eureka Client — registers with discovery server -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
-        </dependency>
-
-        <!-- Config Client — fetches configuration from the Config Server on startup.
-             Instead of reading only local application.properties, the service also
-             pulls config from http://config-server:8888/{service-name}/default.
-             Local properties override remote ones, so you can still customize locally. -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-config</artifactId>
-        </dependency>
     </dependencies>
 
     <build>
@@ -122,14 +90,6 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
             </plugin>
         </plugins>
     </build>
