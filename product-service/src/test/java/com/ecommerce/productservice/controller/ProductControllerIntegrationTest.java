@@ -1,5 +1,6 @@
 package com.ecommerce.productservice.controller;
 
+import com.ecommerce.productservice.BaseIntegrationTest;
 import com.ecommerce.productservice.dto.CreateProductRequest;
 import com.ecommerce.productservice.factory.ProductFactory;
 import com.ecommerce.productservice.model.Category;
@@ -26,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
 @DisplayName("ProductController Integration Tests")
-class ProductControllerIntegrationTest {
+class ProductControllerIntegrationTest extends BaseIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

@@ -1,5 +1,6 @@
 package com.ecommerce.paymentservice.controller;
 
+import com.ecommerce.paymentservice.BaseIntegrationTest;
 import com.ecommerce.paymentservice.dto.CreatePaymentRequest;
 import com.ecommerce.paymentservice.model.Payment;
 import com.ecommerce.paymentservice.model.PaymentMethod;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-class PaymentControllerIntegrationTest {
+class PaymentControllerIntegrationTest extends BaseIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

@@ -1,5 +1,6 @@
 package com.ecommerce.userservice.controller;
 
+import com.ecommerce.userservice.BaseIntegrationTest;
 import com.ecommerce.userservice.dto.CreateUserRequest;
 import com.ecommerce.userservice.dto.LoginRequest;
 import com.ecommerce.userservice.factory.UserFactory;
@@ -32,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @AutoConfigureMockMvc
 @DisplayName("UserController Integration Tests")
-class UserControllerIntegrationTest {
+class UserControllerIntegrationTest extends BaseIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
