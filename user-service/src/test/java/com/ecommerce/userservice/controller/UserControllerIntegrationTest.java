@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
@@ -48,11 +49,18 @@ class UserControllerIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private CacheManager cacheManager;
+
     private Role customerRole;
     private Role adminRole;
 
     @BeforeEach
     void setUp() {
+        // Clear Redis cache before clearing DB — prevents stale cached data
+        // from leaking between tests
+        cacheManager.getCacheNames().forEach(name -> cacheManager.getCache(name).clear());
+
         userRepository.deleteAll();
 
         if (roleRepository.count() == 0) {

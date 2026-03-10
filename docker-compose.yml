@@ -183,6 +183,23 @@ services:
       retries: 5
 
   # ==========================================
+  # REDIS — in-memory cache
+  # ==========================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
   # PLATFORM SERVICES — service discovery, config, gateway
   # ==========================================
 
@@ -276,11 +293,14 @@ services:
       EUREKA_HOST: discovery-server
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+      REDIS_HOST: redis
       SPRING_JPA_SHOW_SQL: "false"
     depends_on:
       postgres-users:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
@@ -305,9 +325,12 @@ services:
       EUREKA_HOST: discovery-server
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+      REDIS_HOST: redis
       SPRING_JPA_SHOW_SQL: "false"
     depends_on:
       postgres-products:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       discovery-server:
         condition: service_healthy
@@ -427,3 +450,4 @@ volumes:
   postgres_orders_data:
   postgres_payments_data:
   pgadmin_data:
+  redis_data:

@@ -1,5 +1,6 @@
 package com.ecommerce.userservice.service;
 
+import com.ecommerce.userservice.dto.UserResponse;
 import com.ecommerce.userservice.exception.DuplicateResourceException;
 import com.ecommerce.userservice.exception.ResourceNotFoundException;
 import com.ecommerce.userservice.factory.UserFactory;
@@ -119,10 +120,12 @@ class UserServiceTest {
 
             when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
-            User result = userService.getUserById(1L);
+            UserResponse result = userService.getUserById(1L);
 
-            assertThat(result).isEqualTo(user);
-            assertThat(result.getId()).isEqualTo(1L);
+            assertThat(result.id()).isEqualTo(1L);
+            assertThat(result.firstName()).isEqualTo(user.getFirstName());
+            assertThat(result.email()).isEqualTo(user.getEmail());
+            assertThat(result.status()).isEqualTo(user.getStatus().name());
         }
 
         @Test

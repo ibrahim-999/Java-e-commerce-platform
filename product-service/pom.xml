@@ -129,6 +129,27 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Redis Cache — stores frequently-requested data in memory (RAM).
+             spring-boot-starter-data-redis provides:
+               1. RedisTemplate — low-level Redis operations (GET, SET, DEL)
+               2. Auto-configuration for connecting to Redis
+               3. Integration with Spring Cache (@Cacheable, @CacheEvict)
+
+             spring-boot-starter-cache provides:
+               1. @EnableCaching annotation support
+               2. @Cacheable — cache the return value of a method
+               3. @CacheEvict — remove stale data from cache
+               4. @CachePut — update cache without skipping the method
+               5. CacheManager — manages all cache instances -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+
         <!-- Eureka Client — registers with discovery server -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

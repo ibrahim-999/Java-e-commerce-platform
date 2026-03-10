@@ -38,11 +38,11 @@ public class ProductController {
                 .body(ApiResponse.success("Product created successfully", ProductResponse.fromEntity(saved)));
     }
 
-    // GET /api/products/{id} — get product by ID
+    // GET /api/products/{id} — get product by ID (cached in Redis)
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<ProductResponse>> getProductById(@PathVariable Long id) {
-        Product product = productService.getProductById(id);
-        return ResponseEntity.ok(ApiResponse.success(ProductResponse.fromEntity(product)));
+        ProductResponse product = productService.getProductById(id);
+        return ResponseEntity.ok(ApiResponse.success(product));
     }
 
     // GET /api/products — list all products (paginated)

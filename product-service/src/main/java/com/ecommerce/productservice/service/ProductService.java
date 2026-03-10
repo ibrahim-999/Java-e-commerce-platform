@@ -1,6 +1,7 @@
 package com.ecommerce.productservice.service;
 
 import com.ecommerce.productservice.dto.PriceStatsResponse;
+import com.ecommerce.productservice.dto.ProductResponse;
 import com.ecommerce.productservice.exception.DuplicateResourceException;
 import com.ecommerce.productservice.exception.InsufficientStockException;
 import com.ecommerce.productservice.exception.ResourceNotFoundException;
@@ -10,6 +11,10 @@ import com.ecommerce.productservice.model.ProductStatus;
 import com.ecommerce.productservice.repository.CategoryRepository;
 import com.ecommerce.productservice.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -17,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProductService {
@@ -45,8 +51,34 @@ public class ProductService {
 
     // ==================== READ ====================
 
+    // @Cacheable — "Before running this method, check if the result is already in Redis."
+    //
+    // How it works:
+    //   1. Method called with id=5
+    //   2. Spring builds cache key: "products::5"
+    //   3. Redis: GET products::5
+    //   4. If found → return cached ProductResponse, method body NEVER executes
+    //   5. If not found → execute method, store result in Redis, then return
+    //
+    // value = "products" → the cache name (a logical group of cached entries)
+    // key = "#id"        → use the method parameter "id" as the cache key
+    //
+    // We cache the ProductResponse (DTO), not the Product entity, because:
+    //   - Entities have lazy-loaded relationships (Hibernate proxies) that can't be serialized
+    //   - DTOs are simple, flat objects — perfect for JSON serialization into Redis
+    @Cacheable(value = "products", key = "#id")
     @Transactional(readOnly = true)
-    public Product getProductById(Long id) {
+    public ProductResponse getProductById(Long id) {
+        log.info("Cache MISS — fetching product {} from database", id);
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", "id", id));
+        return ProductResponse.fromEntity(product);
+    }
+
+    // Internal method for write operations that need the actual entity (not the DTO).
+    // This is NOT cached — it always hits the database to get fresh data for modifications.
+    @Transactional(readOnly = true)
+    public Product getProductEntityById(Long id) {
         return productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", "id", id));
     }
@@ -74,9 +106,17 @@ public class ProductService {
 
     // ==================== UPDATE ====================
 
+    // @CacheEvict — "After this method runs, REMOVE the cached entry for this product."
+    //
+    // Why evict instead of update?
+    //   - Simpler and safer — no risk of cache/DB mismatch
+    //   - The next read will fetch fresh data from DB and re-cache it
+    //   - "Cache invalidation" is one of the hardest problems in CS — keep it simple
+    @CacheEvict(value = "products", key = "#id")
     @Transactional
     public Product updateProduct(Long id, Product updatedData, Long categoryId) {
-        Product existing = getProductById(id);
+        log.info("Evicting product {} from cache (update)", id);
+        Product existing = getProductEntityById(id);
 
         if (updatedData.getName() != null) {
             existing.setName(updatedData.getName());
@@ -108,9 +148,11 @@ public class ProductService {
 
     // ==================== DELETE ====================
 
+    @CacheEvict(value = "products", key = "#id")
     @Transactional
     public void deleteProduct(Long id) {
-        Product product = getProductById(id);
+        log.info("Evicting product {} from cache (delete)", id);
+        Product product = getProductEntityById(id);
         productRepository.delete(product);
     }
 
@@ -126,35 +168,39 @@ public class ProductService {
     //   // The check and update happen in ONE indivisible database operation.
     //   // No other transaction can sneak in between.
 
+    @CacheEvict(value = "products", key = "#productId")
     @Transactional
     public void reduceStock(Long productId, int quantity) {
+        log.info("Evicting product {} from cache (stock reduce)", productId);
         // Atomic SQL: returns 1 if stock was reduced, 0 if insufficient stock
         int rowsAffected = productRepository.reduceStock(productId, quantity);
 
         if (rowsAffected == 0) {
             // Either product doesn't exist or insufficient stock — check which
-            Product product = getProductById(productId);  // throws if not found
+            Product product = getProductEntityById(productId);  // throws if not found
             throw new InsufficientStockException(
                     product.getSku(), quantity, product.getStockQuantity());
         }
 
         // Update status if stock hit zero (separate from the atomic check)
-        Product product = getProductById(productId);
+        Product product = getProductEntityById(productId);
         if (product.getStockQuantity() == 0) {
             product.setStatus(ProductStatus.OUT_OF_STOCK);
         }
     }
 
+    @CacheEvict(value = "products", key = "#productId")
     @Transactional
     public void restoreStock(Long productId, int quantity) {
+        log.info("Evicting product {} from cache (stock restore)", productId);
         // Verify product exists
-        getProductById(productId);
+        getProductEntityById(productId);
 
         // Atomic stock addition
         productRepository.restoreStock(productId, quantity);
 
         // Reactivate if was out of stock
-        Product product = getProductById(productId);
+        Product product = getProductEntityById(productId);
         if (product.getStatus() == ProductStatus.OUT_OF_STOCK) {
             product.setStatus(ProductStatus.ACTIVE);
         }

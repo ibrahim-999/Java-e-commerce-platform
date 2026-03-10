@@ -191,6 +191,36 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==================== Redis (Caching) ====================
+  # Redis is an in-memory data store — think of it as a giant HashMap that lives
+  # outside your application. It's extremely fast because data lives in RAM, not on disk.
+  #
+  # We use it for CACHING: store frequently-requested data (products, users) so we
+  # don't hit PostgreSQL for every request. First request goes to the DB and stores
+  # the result in Redis. Subsequent requests get the data from Redis in ~1ms.
+  #
+  # Redis data structures we use:
+  #   - STRING: simple key-value (cache a single product by ID)
+  #   - HASH:   field-value pairs under one key (not used yet, but useful for sessions)
+  #
+  # Access the Redis CLI: docker exec -it redis redis-cli
+  # Useful commands:  KEYS *        (list all keys)
+  #                   GET key       (get a value)
+  #                   TTL key       (time until key expires)
+  #                   FLUSHALL      (clear everything)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6380:6379"                        # mapped to 6380 on host (6379 taken by local Redis)
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ==================== Kafka UI ====================
   # A web-based dashboard to see your Kafka topics, messages, consumers, and more.
   # Like pgAdmin but for Kafka. Access at: http://localhost:8090
@@ -215,3 +245,4 @@ volumes:
   postgres_orders_data:
   postgres_payments_data:
   pgadmin_data:
+  redis_data:

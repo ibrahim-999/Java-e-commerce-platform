@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -39,10 +40,17 @@ class ProductControllerIntegrationTest {
     @Autowired
     private CategoryRepository categoryRepository;
 
+    @Autowired
+    private CacheManager cacheManager;
+
     private Category testCategory;
 
     @BeforeEach
     void setUp() {
+        // Clear Redis cache BEFORE clearing the DB — prevents stale cached data
+        // from leaking between tests (DB rows are deleted but cache still holds old values)
+        cacheManager.getCacheNames().forEach(name -> cacheManager.getCache(name).clear());
+
         productRepository.deleteAll();
         categoryRepository.deleteAll();
         testCategory = categoryRepository.save(

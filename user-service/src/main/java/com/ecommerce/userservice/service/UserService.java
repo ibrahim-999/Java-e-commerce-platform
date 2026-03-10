@@ -1,5 +1,6 @@
 package com.ecommerce.userservice.service;
 
+import com.ecommerce.userservice.dto.UserResponse;
 import com.ecommerce.userservice.exception.DuplicateResourceException;
 import com.ecommerce.userservice.exception.ResourceNotFoundException;
 import com.ecommerce.userservice.model.Role;
@@ -10,6 +11,8 @@ import com.ecommerce.userservice.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -122,13 +125,30 @@ public class UserService {
 
     // ==================== READ ====================
 
-    // @Transactional(readOnly = true) — optimizes read operations.
-    // Tells Hibernate "don't track changes to these entities" (no dirty checking).
-    // This is faster for queries where you're just reading, not modifying.
+    // @Cacheable — "Before running this method, check if the result is already in Redis."
+    //   1. Method called with id=5
+    //   2. Spring builds cache key: "users::5"
+    //   3. Redis: GET users::5
+    //   4. If found → return cached UserResponse, method body NEVER executes
+    //   5. If not found → execute method, store result in Redis, then return
+    //
+    // We cache the UserResponse (DTO), not the User entity, because:
+    //   - Entities have lazy-loaded relationships (Hibernate proxies) that can't be serialized
+    //   - DTOs are simple, flat objects — perfect for JSON serialization into Redis
+    //   - Also avoids caching sensitive data like password hashes
+    @Cacheable(value = "users", key = "#id")
     @Transactional(readOnly = true)
-    public User getUserById(Long id) {
-        // orElseThrow: if findById returns empty Optional, throw an exception.
-        // This is cleaner than: if (user == null) throw ...
+    public UserResponse getUserById(Long id) {
+        log.info("Cache MISS — fetching user {} from database", id);
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
+        return UserResponse.fromEntity(user);
+    }
+
+    // Internal method for write operations that need the actual entity (not the DTO).
+    // This is NOT cached — it always hits the database to get fresh data for modifications.
+    @Transactional(readOnly = true)
+    public User getUserEntityById(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
     }
@@ -160,9 +180,13 @@ public class UserService {
 
     // ==================== UPDATE ====================
 
+    // @CacheEvict — "After this method runs, REMOVE the cached entry for this user."
+    // The next read will fetch fresh data from DB and re-cache it.
+    @CacheEvict(value = "users", key = "#id")
     @Transactional
     public User updateUser(Long id, User updatedData) {
-        User existingUser = getUserById(id);
+        log.info("Evicting user {} from cache (update)", id);
+        User existingUser = getUserEntityById(id);
 
         // Only update fields that are provided (not null).
         // This prevents accidentally wiping out fields the caller didn't send.
@@ -185,9 +209,11 @@ public class UserService {
 
     // ==================== DELETE ====================
 
+    @CacheEvict(value = "users", key = "#id")
     @Transactional
     public void deleteUser(Long id) {
-        User user = getUserById(id);
+        log.info("Evicting user {} from cache (delete)", id);
+        User user = getUserEntityById(id);
         userRepository.delete(user);
     }
 }

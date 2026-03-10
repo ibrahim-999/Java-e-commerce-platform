@@ -1,6 +1,7 @@
 package com.ecommerce.productservice.service;
 
 import com.ecommerce.productservice.dto.PriceStatsResponse;
+import com.ecommerce.productservice.dto.ProductResponse;
 import com.ecommerce.productservice.exception.DuplicateResourceException;
 import com.ecommerce.productservice.exception.InsufficientStockException;
 import com.ecommerce.productservice.exception.ResourceNotFoundException;
@@ -105,9 +106,13 @@ class ProductServiceTest {
 
             when(productRepository.findById(1L)).thenReturn(Optional.of(product));
 
-            Product result = productService.getProductById(1L);
+            ProductResponse result = productService.getProductById(1L);
 
-            assertThat(result).isEqualTo(product);
+            assertThat(result.id()).isEqualTo(1L);
+            assertThat(result.name()).isEqualTo(product.getName());
+            assertThat(result.sku()).isEqualTo(product.getSku());
+            assertThat(result.price()).isEqualByComparingTo(product.getPrice());
+            assertThat(result.status()).isEqualTo(product.getStatus().name());
         }
 
         @Test
