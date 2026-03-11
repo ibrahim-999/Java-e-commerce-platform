@@ -1,99 +1,123 @@
-# Full-stack Docker Compose — runs ALL services + ALL infrastructure.
+# ==================== E-Commerce Platform — Full Stack ====================
+#
+# Starts the ENTIRE platform: infrastructure + all Spring Boot services.
 # This is how the platform runs in production — everything in containers.
 #
 # Start:  docker compose up -d --build
 # Stop:   docker compose down
 # Logs:   docker compose logs -f
+# Status: docker compose ps
 # Rebuild one service: docker compose up -d --build user-service
 #
-# IMPORTANT: Inside Docker, services communicate using CONTAINER NAMES, not localhost.
-# For example, user-service connects to "postgres-users:5432" (not "localhost:5432").
-# The "ports" section maps container ports to your host machine for external access.
+# SECRETS: All passwords and keys come from the .env file (same directory).
+# Docker Compose reads .env automatically — you don't need to specify it.
+#
+# NETWORKING: Inside Docker, services talk to each other using CONTAINER NAMES.
+# For example, user-service connects to "postgres-users:5432", not "localhost:5432".
+# The "ports" section only maps ports to your HOST machine (for external access).
 
 services:
 
   # ==========================================
   # DATABASES — one per service (database-per-service pattern)
   # ==========================================
+  # WHY separate databases? Each microservice OWNS its data. No service can
+  # directly read another service's database. This enforces loose coupling —
+  # services communicate only through APIs and events, never through shared tables.
 
   postgres-users:
     image: postgres:16
     container_name: postgres-users
+    restart: unless-stopped           # Auto-restart if it crashes
     environment:
       POSTGRES_DB: users_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}   # From .env file — not hardcoded!
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_users_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d users_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   postgres-products:
     image: postgres:16
     container_name: postgres-products
+    restart: unless-stopped
     environment:
       POSTGRES_DB: products_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5436:5432"
     volumes:
       - postgres_products_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d products_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d products_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   postgres-orders:
     image: postgres:16
     container_name: postgres-orders
+    restart: unless-stopped
     environment:
       POSTGRES_DB: orders_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5434:5432"
     volumes:
       - postgres_orders_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d orders_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d orders_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   postgres-payments:
     image: postgres:16
     container_name: postgres-payments
+    restart: unless-stopped
     environment:
       POSTGRES_DB: payments_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5435:5432"
     volumes:
       - postgres_payments_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d payments_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d payments_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   # ==========================================
   # pgAdmin — Database management UI
   # ==========================================
+  # Access at: http://localhost:5050
+  # Login with the PGADMIN_EMAIL and PGADMIN_PASSWORD from .env
 
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
+    restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     ports:
       - "5050:80"
     depends_on:
@@ -107,16 +131,22 @@ services:
         condition: service_healthy
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - ecommerce-network
 
   # ==========================================
   # KAFKA — async messaging infrastructure
   # ==========================================
 
-  # Zookeeper — Kafka's cluster coordinator.
-  # Tracks which brokers are alive, manages topic metadata.
+  # Zookeeper — Kafka's "manager" — it keeps track of which Kafka brokers are alive,
+  # which topics exist, and who is the leader for each partition.
+  # Think of it as the air traffic controller for Kafka.
+  # Note: Newer Kafka versions (3.5+) can run WITHOUT Zookeeper (KRaft mode),
+  # but the Confluent images we use still require it.
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -125,19 +155,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
-  # Kafka — the message broker. Receives events from producers, delivers to consumers.
+  # Kafka — the message broker. Receives events from producers (our services)
+  # and delivers them to consumers (notification-service).
+  #
+  # Key concepts:
+  #   - Topic: a named channel (e.g., "user-events", "order-events")
+  #   - Producer: publishes messages to a topic
+  #   - Consumer: reads messages from a topic
+  #   - Offset: the position of a message within a partition (like a bookmark)
+  #
+  # Messages are PERSISTED on disk — even if notification-service is down,
+  # messages wait in Kafka until it comes back up.
+  #
+  # Inside Docker: services connect via kafka:29092
+  # From host: connect via localhost:9092
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
+    restart: unless-stopped
     depends_on:
       zookeeper:
         condition: service_healthy
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # Inside Docker, services connect via kafka:29092 (container network).
-      # From host machine, connect via localhost:9092.
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -152,12 +196,15 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - ecommerce-network
 
   # Kafka UI — web dashboard for Kafka topics, messages, and consumers.
   # Access at: http://localhost:8090
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
@@ -166,14 +213,30 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     ports:
       - "8090:8080"
+    networks:
+      - ecommerce-network
 
   # ==========================================
   # TRACING — distributed request tracing
   # ==========================================
+  # Zipkin collects and visualizes trace data from all services.
+  # When a request flows through Gateway → order-service → user-service → payment-service,
+  # Zipkin shows the ENTIRE journey as a timeline — which services were called,
+  # how long each took, and where errors occurred.
+  #
+  # How it works:
+  #   1. Gateway receives a request, generates a traceId (e.g., "abc123")
+  #   2. Gateway forwards the request to order-service with traceId in headers
+  #   3. order-service calls user-service, passing the SAME traceId
+  #   4. Each service reports its "span" (timing data) to Zipkin
+  #   5. Zipkin assembles all spans into a complete trace and shows the timeline
+  #
+  # Access Zipkin UI at: http://localhost:9411
 
   zipkin:
     image: openzipkin/zipkin:latest
     container_name: zipkin
+    restart: unless-stopped
     ports:
       - "9411:9411"
     healthcheck:
@@ -181,16 +244,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   # ==========================================
   # REDIS — in-memory cache
   # ==========================================
+  # Redis is an in-memory data store — think of it as a giant HashMap that lives
+  # outside your application. It's extremely fast because data lives in RAM, not on disk.
+  #
+  # We use it for CACHING: store frequently-requested data (products, users) so we
+  # don't hit PostgreSQL for every request. First request goes to the DB and stores
+  # the result in Redis. Subsequent requests get the data from Redis in ~1ms.
+  #
+  # Used by user-service and product-service (@Cacheable, @CacheEvict annotations).
+  #
+  # Redis CLI: docker exec -it redis redis-cli
+  # Useful commands:  KEYS *    (list all keys)
+  #                   GET key   (get a value)
+  #                   TTL key   (time until key expires)
+  #                   FLUSHALL  (clear everything)
 
   redis:
     image: redis:7-alpine
     container_name: redis
+    restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "6383:6379"     # 6383 on host → 6379 in container
     volumes:
       - redis_data:/data
     healthcheck:
@@ -198,46 +278,66 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - ecommerce-network
 
   # ==========================================
-  # PLATFORM SERVICES — service discovery, config, gateway
+  # PLATFORM SERVICES — Discovery, Config, Gateway
   # ==========================================
+  # Start order matters! Discovery → Config → Gateway → Business services
+  #
+  # WHY this order?
+  # 1. Discovery Server (Eureka) must start first — all services register here
+  # 2. Config Server starts next — it registers with Eureka, then serves config
+  # 3. Gateway starts next — it needs Eureka to find services to route to
+  # 4. Business services start last — they need both Eureka AND Config Server
 
   # ---------- Discovery Server (Eureka, port 8761) ----------
-  # Service registry — all services register here so they can find each other.
+  # The service registry — every service registers here on startup.
+  # Services find each other through Eureka instead of hardcoded URLs.
+  # Dashboard: http://localhost:8761 (login: eureka / eureka123)
   discovery-server:
     build: ./discovery-server
     container_name: discovery-server
+    restart: unless-stopped
     ports:
       - "8761:8761"
     environment:
-      EUREKA_USERNAME: eureka
-      EUREKA_PASSWORD: eureka123
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
     depends_on:
       zipkin:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://eureka:eureka123@localhost:8761/actuator/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://${EUREKA_USERNAME}:${EUREKA_PASSWORD}@localhost:8761/actuator/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - ecommerce-network
 
   # ---------- Config Server (port 8888) ----------
   # Centralized configuration — serves properties to all services.
+  # Instead of each service having its own application.properties with DB URLs,
+  # Kafka addresses, etc., they all fetch config from here on startup.
+  # WHY: Change a config in ONE place, restart the service, done.
   config-server:
     build: ./config-server
     container_name: config-server
+    restart: unless-stopped
     ports:
       - "8888:8888"
     environment:
-      EUREKA_USERNAME: eureka
-      EUREKA_PASSWORD: eureka123
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       EUREKA_HOST: discovery-server
       CONFIG_DIR: /config-repo
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
     volumes:
+      # Mount the config-repo directory as read-only inside the container.
+      # The config server reads .properties files from this directory.
       - ./config-repo:/config-repo:ro
     depends_on:
       discovery-server:
@@ -248,22 +348,30 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - ecommerce-network
 
   # ---------- API Gateway (port 8060) ----------
-  # Single entry point for all client requests.
+  # Single entry point for ALL client requests.
+  # Clients never call services directly — they go through the gateway.
+  # The gateway uses Eureka to discover where each service lives,
+  # then routes the request to the right one.
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
+    restart: unless-stopped
     ports:
       - "8060:8060"
     environment:
-      EUREKA_USERNAME: eureka
-      EUREKA_PASSWORD: eureka123
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       EUREKA_HOST: discovery-server
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
     depends_on:
       discovery-server:
+        condition: service_healthy
+      config-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8060/actuator/health || exit 1"]
@@ -271,29 +379,46 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - ecommerce-network
 
   # ==========================================
   # BUSINESS SERVICES — the application layer
   # ==========================================
+  # All business services depend on:
+  #   - Their own database (healthy)
+  #   - Discovery server (to register with Eureka)
+  #   - Config server (to fetch centralized configuration)
+  #   - Kafka (for event publishing/consuming)
+  #
+  # The depends_on + service_healthy ensures Docker waits for each
+  # dependency to be FULLY READY before starting the service.
 
   # ---------- User Service (port 8081, HTTPS) ----------
   # Handles: registration, login, JWT auth, user management
   user-service:
     build: ./user-service
     container_name: user-service
+    restart: unless-stopped
     ports:
       - "8081:8081"
     environment:
+      # Database — points to the postgres-users CONTAINER, not localhost
       DB_URL: jdbc:postgresql://postgres-users:5432/users_db
-      DB_USERNAME: admin
-      DB_PASSWORD: admin123
-      SSL_KEYSTORE_PASSWORD: changeit
-      JWT_SECRET: my-super-secret-key-that-is-at-least-32-characters-long
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # Security
+      SSL_KEYSTORE_PASSWORD: ${SSL_KEYSTORE_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      # Infrastructure — all using Docker container names
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_HOST: discovery-server
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
       REDIS_HOST: redis
+      REDIS_PORT: 6379
       SPRING_JPA_SHOW_SQL: "false"
     depends_on:
       postgres-users:
@@ -302,7 +427,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      discovery-server:
+      config-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sfk https://localhost:8081/actuator/health || exit 1"]
@@ -310,29 +435,35 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - ecommerce-network
 
   # ---------- Product Service (port 8082) ----------
   # Handles: products, categories, inventory, stock management
   product-service:
     build: ./product-service
     container_name: product-service
+    restart: unless-stopped
     ports:
       - "8082:8082"
     environment:
       DB_URL: jdbc:postgresql://postgres-products:5432/products_db
-      DB_USERNAME: admin
-      DB_PASSWORD: admin123
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
       EUREKA_HOST: discovery-server
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
       REDIS_HOST: redis
+      REDIS_PORT: 6379
       SPRING_JPA_SHOW_SQL: "false"
     depends_on:
       postgres-products:
         condition: service_healthy
       redis:
         condition: service_healthy
-      discovery-server:
+      config-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8082/actuator/health || exit 1"]
@@ -340,46 +471,26 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-  # ---------- Notification Service (port 8085) ----------
-  # Kafka consumer — listens for events from other services and logs notifications.
-  # No database needed — it only reads from Kafka topics.
-  notification-service:
-    build: ./notification-service
-    container_name: notification-service
-    ports:
-      - "8085:8085"
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      EUREKA_HOST: discovery-server
-      CONFIG_SERVER_HOST: config-server
-      ZIPKIN_URL: http://zipkin:9411/api/v2/spans
-    depends_on:
-      kafka:
-        condition: service_healthy
-      discovery-server:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8085/actuator/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+    networks:
+      - ecommerce-network
 
   # ---------- Payment Service (port 8084) ----------
-  # Handles: payment processing, gateways (Stripe/PayPal/Bank), refunds, transaction history
+  # Handles: payment processing, gateways (Stripe/PayPal/Bank), refunds
   # Started BEFORE order-service because order-service calls payment-service.
   payment-service:
     build: ./payment-service
     container_name: payment-service
+    restart: unless-stopped
     ports:
       - "8084:8084"
     environment:
       DB_URL: jdbc:postgresql://postgres-payments:5432/payments_db
-      DB_USERNAME: admin
-      DB_PASSWORD: admin123
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_HOST: discovery-server
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
       SPRING_JPA_SHOW_SQL: "false"
@@ -388,7 +499,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      discovery-server:
+      config-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8084/actuator/health || exit 1"]
@@ -396,30 +507,70 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - ecommerce-network
+
+  # ---------- Notification Service (port 8085) ----------
+  # Kafka consumer — listens for events and logs notifications.
+  # No database — it only reads from Kafka topics.
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_HOST: discovery-server
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
+      CONFIG_SERVER_HOST: config-server
+      ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+    depends_on:
+      kafka:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ecommerce-network
 
   # ---------- Order Service (port 8083) ----------
   # Handles: order creation, cancellation, status history
   # Calls: user-service, product-service, payment-service
-  # Started LAST because it depends on all other services.
+  # Started LAST because it depends on all other business services.
   order-service:
     build: ./order-service
     container_name: order-service
+    restart: unless-stopped
     ports:
       - "8083:8083"
     environment:
       DB_URL: jdbc:postgresql://postgres-orders:5432/orders_db
-      DB_USERNAME: admin
-      DB_PASSWORD: admin123
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # Inter-service URLs — using Docker container names instead of localhost
       USER_SERVICE_URL: https://user-service:8081
       PRODUCT_SERVICE_URL: http://product-service:8082
       PAYMENT_SERVICE_URL: http://payment-service:8084
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_HOST: discovery-server
+      EUREKA_USERNAME: ${EUREKA_USERNAME}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD}
       CONFIG_SERVER_HOST: config-server
       ZIPKIN_URL: http://zipkin:9411/api/v2/spans
       SPRING_JPA_SHOW_SQL: "false"
     depends_on:
       postgres-orders:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      config-server:
         condition: service_healthy
       user-service:
         condition: service_healthy
@@ -427,22 +578,45 @@ services:
         condition: service_healthy
       payment-service:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-      discovery-server:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8083/actuator/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - ecommerce-network
+
+# ==========================================
+# NETWORKS
+# ==========================================
+# A Docker network is like a private LAN for your containers. Containers on
+# the same network can reach each other by name (e.g., "redis", "kafka").
+# Containers NOT on the network can't see your services at all.
+#
+# WHY define a network explicitly?
+# 1. The name is predictable (not "ecommerce-platform_default")
+# 2. You can reference it from other compose files
+# 3. It documents that all services are on the same network
+# 4. Bridge driver = all containers on a single host (for production clusters,
+#    you'd use "overlay" driver with Docker Swarm or Kubernetes)
+
+networks:
+  ecommerce-network:
+    driver: bridge
 
 # ==========================================
 # VOLUMES — persistent data storage
 # ==========================================
-# Named volumes keep data across container restarts.
-# Without these, your databases would be empty every time you restart.
+# Docker containers are EPHEMERAL — when you remove a container, all its data
+# is gone. That's a problem for databases! Named volumes solve this by storing
+# data on your host machine's disk, separate from the container.
+#
+# Even if you run `docker compose down` and `docker compose up`, the volumes
+# keep your data. The containers are new, but they mount the same volumes.
+#
+# To DELETE all data: docker compose down -v
+# To see volumes:     docker volume ls
 
 volumes:
   postgres_users_data:

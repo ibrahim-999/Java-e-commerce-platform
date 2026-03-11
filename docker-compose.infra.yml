@@ -1,26 +1,42 @@
-# Infrastructure-only Docker Compose
-# Used during development — run your Spring Boot apps separately from the terminal
-# Start with:  docker compose -f docker-compose.infra.yml up -d
-# Stop with:   docker compose -f docker-compose.infra.yml down
+# ==================== Infrastructure-Only Docker Compose ====================
+#
+# Used during DEVELOPMENT — run databases, Kafka, Redis in Docker,
+# but run your Spring Boot apps from the terminal with Maven.
+#
+# WHY two compose files?
+# During development, you restart Spring Boot apps frequently (code changes).
+# Restarting a Docker container is slower than restarting `mvn spring-boot:run`.
+# So we keep infrastructure in Docker (it rarely changes) and run apps locally.
+#
+# Start:  docker compose -f docker-compose.infra.yml up -d
+# Stop:   docker compose -f docker-compose.infra.yml down
+# Logs:   docker compose -f docker-compose.infra.yml logs -f
+# Reset:  docker compose -f docker-compose.infra.yml down -v  (deletes all data!)
+#
+# SECRETS: All passwords come from .env file (same directory).
+# Docker Compose reads .env automatically — you don't need to specify it.
 
 services:
 
   # ==================== PostgreSQL (Users DB) ====================
   # This is the database for the user-service.
   # Each microservice will get its own database — they never share.
+  # This is the "database-per-service" pattern: services own their data,
+  # and other services can only access it through the service's API.
   postgres-users:
     image: postgres:16
     container_name: postgres-users
+    restart: unless-stopped           # Auto-restart if container crashes
     environment:
-      POSTGRES_DB: users_db          # creates this database on first startup
-      POSTGRES_USER: admin           # the database username
-      POSTGRES_PASSWORD: admin123    # the database password (use env vars in production!)
+      POSTGRES_DB: users_db           # Creates this database on first startup
+      POSTGRES_USER: ${DB_USERNAME}   # From .env file — not hardcoded!
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"                  # host:container — access on localhost:5432
+      - "5432:5432"                   # host:container — access on localhost:5432
     volumes:
-      - postgres_users_data:/var/lib/postgresql/data   # persist data across restarts
+      - postgres_users_data:/var/lib/postgresql/data   # Persist data across restarts
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d users_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,16 +46,17 @@ services:
   postgres-products:
     image: postgres:16
     container_name: postgres-products
+    restart: unless-stopped
     environment:
       POSTGRES_DB: products_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5436:5432"                  # mapped to 5436 on host (5433 taken by another project)
+      - "5436:5432"                   # Mapped to 5436 on host to avoid conflict
     volumes:
       - postgres_products_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d products_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d products_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,16 +66,17 @@ services:
   postgres-orders:
     image: postgres:16
     container_name: postgres-orders
+    restart: unless-stopped
     environment:
       POSTGRES_DB: orders_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5434:5432"
     volumes:
       - postgres_orders_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d orders_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d orders_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -68,16 +86,17 @@ services:
   postgres-payments:
     image: postgres:16
     container_name: postgres-payments
+    restart: unless-stopped
     environment:
       POSTGRES_DB: payments_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5435:5432"
     volumes:
       - postgres_payments_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d payments_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d payments_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -85,14 +104,16 @@ services:
   # ==================== pgAdmin (Database UI) ====================
   # A web-based GUI to view and manage your PostgreSQL databases.
   # Access at: http://localhost:5050
+  # Login with the PGADMIN_EMAIL and PGADMIN_PASSWORD from .env
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
+    restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com     # login email for pgAdmin
-      PGADMIN_DEFAULT_PASSWORD: admin123          # login password for pgAdmin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}      # Login email for pgAdmin
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD} # Login password for pgAdmin
     ports:
-      - "5050:80"                    # pgAdmin runs on port 80 inside container, we map it to 5050
+      - "5050:80"                     # pgAdmin runs on port 80 inside container, we map to 5050
     depends_on:
       postgres-users:
         condition: service_healthy
@@ -114,9 +135,10 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
+    restart: unless-stopped
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181           # port Kafka uses to talk to Zookeeper
-      ZOOKEEPER_TICK_TIME: 2000             # heartbeat interval (ms) — how often Zookeeper checks if Kafka is alive
+      ZOOKEEPER_CLIENT_PORT: 2181           # Port Kafka uses to talk to Zookeeper
+      ZOOKEEPER_TICK_TIME: 2000             # Heartbeat interval (ms)
     ports:
       - "2181:2181"
     healthcheck:
@@ -142,20 +164,21 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
+    restart: unless-stopped
     depends_on:
       zookeeper:
         condition: service_healthy
     environment:
-      KAFKA_BROKER_ID: 1                                           # unique ID for this broker
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181                      # where to find Zookeeper
+      KAFKA_BROKER_ID: 1                                           # Unique ID for this broker
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181                      # Where to find Zookeeper
       # Two listeners: one for apps running on your HOST machine (localhost:9092),
       # one for apps running INSIDE Docker (kafka:29092).
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1                    # only 1 broker, so replication = 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1                       # minimum in-sync replicas
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1            # same reason — single broker
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1                    # Only 1 broker, so replication = 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1                       # Minimum in-sync replicas
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1            # Same reason — single broker
     ports:
       - "9092:9092"
     healthcheck:
@@ -183,6 +206,7 @@ services:
   zipkin:
     image: openzipkin/zipkin:latest
     container_name: zipkin
+    restart: unless-stopped
     ports:
       - "9411:9411"
     healthcheck:
@@ -211,8 +235,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    restart: unless-stopped
     ports:
-      - "6380:6379"                        # mapped to 6380 on host (6379 taken by local Redis)
+      - "6383:6379"     # 6383 on host → 6379 in container
     volumes:
       - redis_data:/data
     healthcheck:
@@ -227,12 +252,13 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
     environment:
-      KAFKA_CLUSTERS_0_NAME: local                                 # display name in the UI
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092               # internal Docker listener
+      KAFKA_CLUSTERS_0_NAME: local                                 # Display name in the UI
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092               # Internal Docker listener
     ports:
       - "8090:8080"                                                # Kafka UI runs on 8080 inside, we map to 8090
 

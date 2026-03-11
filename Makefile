@@ -4,7 +4,7 @@
 
 .PHONY: help build build-all test test-all clean clean-all generate-cert \
        infra-up infra-down infra-logs infra-status infra-restart infra-clean \
-       up down logs status restart rebuild \
+       up down logs status restart rebuild full-clean e2e-test \
        run-discovery run-config run-gateway \
        run-user run-product run-order run-payment run-notification run-all stop-all
 
@@ -112,7 +112,7 @@ generate-cert: ## Generate a self-signed SSL certificate for HTTPS
 		-dname "CN=localhost, OU=Dev, O=ECommerce, L=City, ST=State, C=US"
 
 # ==================== DOCKER INFRASTRUCTURE ====================
-infra-up: ## Start infrastructure (PostgreSQL, pgAdmin)
+infra-up: ## Start infrastructure (PostgreSQL, Kafka, Redis, Zipkin, pgAdmin)
 	docker compose -f docker-compose.infra.yml up -d
 
 infra-down: ## Stop infrastructure
@@ -148,3 +148,30 @@ restart: ## Restart the full platform
 
 rebuild: ## Rebuild and restart a single service (usage: make rebuild s=user-service)
 	docker compose up -d --build $(s)
+
+full-clean: ## Stop everything and DELETE all data (volumes, images)
+	docker compose down -v --rmi local
+
+# ==================== END-TO-END TEST ====================
+e2e-test: ## Run end-to-end test against running stack (requires: make up)
+	@echo "=== E2E Test: Full User Journey ==="
+	@echo ""
+	@echo "1. Registering user..."
+	@curl -sk -X POST http://localhost:8060/api/auth/register \
+	  -H "Content-Type: application/json" \
+	  -d '{"firstName":"E2E","lastName":"Test","email":"e2e@test.com","password":"password123"}' \
+	  | python3 -m json.tool
+	@echo ""
+	@echo "2. Creating product..."
+	@curl -s -X POST http://localhost:8060/api/products \
+	  -H "Content-Type: application/json" \
+	  -d '{"name":"E2E Widget","description":"Test product","price":19.99,"sku":"E2E-001","stockQuantity":50,"categoryId":1}' \
+	  | python3 -m json.tool
+	@echo ""
+	@echo "3. Placing order..."
+	@curl -s -X POST http://localhost:8060/api/orders \
+	  -H "Content-Type: application/json" \
+	  -d '{"userId":1,"items":[{"productId":1,"quantity":1}],"paymentMethod":"CREDIT_CARD"}' \
+	  | python3 -m json.tool
+	@echo ""
+	@echo "=== E2E Test Complete ==="

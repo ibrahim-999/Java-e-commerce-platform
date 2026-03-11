@@ -254,19 +254,22 @@ open http://localhost:9411
 
 ## Testing
 
+All services use **Testcontainers** (real PostgreSQL + Redis in Docker containers) — no H2 in-memory shortcuts.
+JaCoCo enforces **80% minimum line coverage** on every service.
+
 ```bash
-# Run all tests (98 total across all services)
+# Run all tests (285 total across all services)
 make test-all
 
 # Run tests for a specific service
-cd user-service && mvn test          # 27 tests
-cd product-service && mvn test       # 25 tests
-cd order-service && mvn test         #  7 tests
-cd payment-service && mvn test       # 28 tests
-cd notification-service && mvn test  # 11 tests
+cd user-service && mvn test          # 75 tests  (84% coverage)
+cd product-service && mvn test       # 45 tests  (80%+ coverage)
+cd order-service && mvn test         # 48 tests  (81% coverage)
+cd payment-service && mvn test       # 68 tests  (96% coverage)
+cd notification-service && mvn test  # 49 tests  (98% coverage)
 ```
 
-Tests require infrastructure running (`make infra-up`).
+Tests use Testcontainers (Docker must be running). No infrastructure needed (`make infra-up` not required).
 
 ---
 
@@ -334,10 +337,12 @@ make down             # Stop everything
 make logs             # Follow all logs
 make status           # Container health status
 make rebuild s=<svc>  # Rebuild one service
+make full-clean       # Stop everything + delete data + images
+make e2e-test         # Run end-to-end test against running stack
 
 # ── Build & Test ──
 make build-all        # Package all services as JARs
-make test-all         # Run all 98 tests
+make test-all         # Run all 285 tests (80%+ coverage)
 make clean-all        # Remove build artifacts
 
 # ── SSL ──
@@ -361,6 +366,12 @@ make generate-cert    # Generate self-signed certificate for user-service
 | `EUREKA_PASSWORD` | `eureka123` | All services |
 | `CONFIG_SERVER_HOST` | `localhost` | All services |
 | `ZIPKIN_URL` | `http://localhost:9411/api/v2/spans` | All services |
+| `REDIS_HOST` | `localhost` | user-service, product-service |
+| `REDIS_PORT` | `6379` | user-service, product-service |
+| `PGADMIN_EMAIL` | `admin@admin.com` | pgAdmin |
+| `PGADMIN_PASSWORD` | (from .env) | pgAdmin |
 | `GATEWAY_PORT` | `8060` | api-gateway |
 
 In Docker, these are set automatically via `docker-compose.yml` using container names.
+All secrets come from the `.env` file (which is in `.gitignore` — never committed).
+Copy `.env.example` to `.env` to get started: `cp .env.example .env`
