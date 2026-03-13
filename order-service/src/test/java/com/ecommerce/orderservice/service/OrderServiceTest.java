@@ -175,8 +175,8 @@ class OrderServiceTest {
         }
 
         @Test
-        @DisplayName("should keep order PENDING if payment fails")
-        void shouldKeepOrderPendingIfPaymentFails() throws Exception {
+        @DisplayName("should mark order PAYMENT_FAILED and restore stock when payment service is down")
+        void shouldMarkPaymentFailedAndRestoreStockWhenPaymentFails() throws Exception {
             doNothing().when(orderService).validateUser(1L);
 
             JsonNode productResponse = objectMapper.readTree("""
@@ -184,6 +184,7 @@ class OrderServiceTest {
                     """);
             doReturn(productResponse).when(orderService).getProduct(10L);
             doNothing().when(orderService).reduceProductStock(10L, 1);
+            doNothing().when(orderService).restoreProductStock(10L, 1);
 
             // Payment service is down
             doThrow(new ServiceUnavailableException("Payment service"))
@@ -203,9 +204,10 @@ class OrderServiceTest {
 
             Order result = orderService.createOrder(request);
 
-            // Order is saved but stays PENDING — payment can be retried later
-            assertThat(result.getStatus()).isEqualTo(OrderStatus.PENDING);
+            // Saga compensation: stock restored, order marked PAYMENT_FAILED
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
             assertThat(result.getPaymentId()).isNull();
+            verify(orderService).restoreProductStock(10L, 1);
         }
     }
 

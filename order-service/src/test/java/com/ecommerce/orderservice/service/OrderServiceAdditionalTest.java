@@ -424,6 +424,182 @@ class OrderServiceAdditionalTest {
     }
 
     @Nested
+    @DisplayName("retryPayment")
+    class RetryPayment {
+
+        @Test
+        @DisplayName("should re-reserve stock, retry payment, and confirm order on success")
+        void shouldConfirmOrderOnSuccessfulRetry() throws Exception {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500)).build();
+            OrderItem item = OrderItem.builder()
+                    .id(1L).productId(10L).quantity(2)
+                    .priceAtPurchase(BigDecimal.valueOf(250))
+                    .productNameSnapshot("Laptop").build();
+            order.addItem(item);
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+            doNothing().when(orderService).reduceProductStock(10L, 2);
+
+            JsonNode paymentResponse = objectMapper.readTree("""
+                    {"success": true, "data": {"id": 50, "status": "COMPLETED", "transactionId": "txn_retry"}}
+                    """);
+            doReturn(paymentResponse).when(orderService)
+                    .initiatePayment(eq(1L), eq(100L), any(BigDecimal.class), eq("CREDIT_CARD"));
+
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            Order result = orderService.retryPayment(1L, "CREDIT_CARD");
+
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
+            assertThat(result.getPaymentId()).isEqualTo(50L);
+            verify(orderService).reduceProductStock(10L, 2);
+            verify(orderService, never()).restoreProductStock(anyLong(), anyInt());
+        }
+
+        @Test
+        @DisplayName("should restore stock and mark PAYMENT_FAILED when retry payment fails")
+        void shouldRestoreStockWhenRetryPaymentFails() throws Exception {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500)).build();
+            OrderItem item = OrderItem.builder()
+                    .id(1L).productId(10L).quantity(2)
+                    .priceAtPurchase(BigDecimal.valueOf(250))
+                    .productNameSnapshot("Laptop").build();
+            order.addItem(item);
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+            doNothing().when(orderService).reduceProductStock(10L, 2);
+            doNothing().when(orderService).restoreProductStock(10L, 2);
+
+            // Payment service is down
+            doThrow(new ServiceUnavailableException("Payment service"))
+                    .when(orderService).initiatePayment(eq(1L), eq(100L), any(BigDecimal.class), eq("CREDIT_CARD"));
+
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            Order result = orderService.retryPayment(1L, "CREDIT_CARD");
+
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            verify(orderService).reduceProductStock(10L, 2);
+            verify(orderService).restoreProductStock(10L, 2);
+        }
+
+        @Test
+        @DisplayName("should restore stock when payment returns non-COMPLETED status on retry")
+        void shouldRestoreStockWhenRetryPaymentNotCompleted() throws Exception {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500)).build();
+            OrderItem item = OrderItem.builder()
+                    .id(1L).productId(10L).quantity(2)
+                    .priceAtPurchase(BigDecimal.valueOf(250))
+                    .productNameSnapshot("Laptop").build();
+            order.addItem(item);
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+            doNothing().when(orderService).reduceProductStock(10L, 2);
+            doNothing().when(orderService).restoreProductStock(10L, 2);
+
+            JsonNode paymentResponse = objectMapper.readTree("""
+                    {"success": true, "data": {"id": 51, "status": "FAILED", "transactionId": ""}}
+                    """);
+            doReturn(paymentResponse).when(orderService)
+                    .initiatePayment(eq(1L), eq(100L), any(BigDecimal.class), eq("PAYPAL"));
+
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            Order result = orderService.retryPayment(1L, "PAYPAL");
+
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            assertThat(result.getPaymentId()).isEqualTo(51L);
+            verify(orderService).restoreProductStock(10L, 2);
+        }
+
+        @Test
+        @DisplayName("should throw when retrying payment for non-PAYMENT_FAILED order")
+        void shouldThrowWhenRetryingNonPaymentFailedOrder() {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.CONFIRMED)
+                    .totalAmount(BigDecimal.valueOf(500)).build();
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+            assertThatThrownBy(() -> orderService.retryPayment(1L, "CREDIT_CARD"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("PAYMENT_FAILED");
+
+            verify(orderService, never()).reduceProductStock(anyLong(), anyInt());
+        }
+
+        @Test
+        @DisplayName("should rollback partially reserved stock if stock reservation fails during retry")
+        void shouldRollbackPartialStockOnReservationFailure() {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(800)).build();
+            order.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(300))
+                    .productNameSnapshot("Item A").build());
+            order.addItem(OrderItem.builder()
+                    .id(2L).productId(20L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Item B").build());
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+            doNothing().when(orderService).reduceProductStock(10L, 1);
+            // Second item has insufficient stock
+            doThrow(new IllegalArgumentException("Insufficient stock for product 20"))
+                    .when(orderService).reduceProductStock(20L, 1);
+            doNothing().when(orderService).restoreProductStock(10L, 1);
+
+            assertThatThrownBy(() -> orderService.retryPayment(1L, "CREDIT_CARD"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Insufficient stock");
+
+            // First item's stock was restored after second failed
+            verify(orderService).restoreProductStock(10L, 1);
+            // Second item was never reserved, so never restored
+            verify(orderService, never()).restoreProductStock(eq(20L), anyInt());
+        }
+
+        @Test
+        @DisplayName("should record status transitions in audit trail during successful retry")
+        void shouldRecordAuditTrailOnSuccessfulRetry() throws Exception {
+            Order order = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500)).build();
+            order.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Laptop").build());
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+            doNothing().when(orderService).reduceProductStock(10L, 1);
+
+            JsonNode paymentResponse = objectMapper.readTree("""
+                    {"success": true, "data": {"id": 50, "status": "COMPLETED", "transactionId": "txn_ok"}}
+                    """);
+            doReturn(paymentResponse).when(orderService)
+                    .initiatePayment(eq(1L), eq(100L), any(BigDecimal.class), eq("CREDIT_CARD"));
+
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            Order result = orderService.retryPayment(1L, "CREDIT_CARD");
+
+            // PAYMENT_FAILED → PENDING (retry initiated) → CONFIRMED (payment succeeded)
+            assertThat(result.getStatusHistory()).hasSize(2);
+            assertThat(result.getStatusHistory().get(0).getFromStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            assertThat(result.getStatusHistory().get(0).getToStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatusHistory().get(1).getFromStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatusHistory().get(1).getToStatus()).isEqualTo(OrderStatus.CONFIRMED);
+        }
+    }
+
+    @Nested
     @DisplayName("Fallback Methods")
     class FallbackMethods {
 
@@ -516,8 +692,8 @@ class OrderServiceAdditionalTest {
     class CreateOrderAdditional {
 
         @Test
-        @DisplayName("should keep order PENDING when payment status is not COMPLETED")
-        void shouldKeepOrderPendingWhenPaymentNotCompleted() throws Exception {
+        @DisplayName("should mark PAYMENT_FAILED and restore stock when payment status is not COMPLETED")
+        void shouldMarkPaymentFailedWhenPaymentNotCompleted() throws Exception {
             doNothing().when(orderService).validateUser(1L);
 
             JsonNode productResponse = objectMapper.readTree("""
@@ -525,8 +701,9 @@ class OrderServiceAdditionalTest {
                     """);
             doReturn(productResponse).when(orderService).getProduct(10L);
             doNothing().when(orderService).reduceProductStock(10L, 1);
+            doNothing().when(orderService).restoreProductStock(10L, 1);
 
-            // Payment returns PENDING (not COMPLETED)
+            // Payment returns PENDING (not COMPLETED) — saga treats this as failure
             JsonNode paymentResponse = objectMapper.readTree("""
                     {
                         "success": true,
@@ -554,12 +731,14 @@ class OrderServiceAdditionalTest {
 
             Order result = orderService.createOrder(request);
 
-            // Order stays PENDING because payment wasn't COMPLETED
-            assertThat(result.getStatus()).isEqualTo(OrderStatus.PENDING);
+            // Saga compensation: stock restored, order marked PAYMENT_FAILED
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
             assertThat(result.getPaymentId()).isEqualTo(200L);
-            // Status history should only have the initial PENDING entry
-            assertThat(result.getStatusHistory()).hasSize(1);
+            verify(orderService).restoreProductStock(10L, 1);
+            // Status history: PENDING (initial) + PAYMENT_FAILED (compensation)
+            assertThat(result.getStatusHistory()).hasSize(2);
             assertThat(result.getStatusHistory().get(0).getToStatus()).isEqualTo(OrderStatus.PENDING);
+            assertThat(result.getStatusHistory().get(1).getToStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
         }
 
         @Test

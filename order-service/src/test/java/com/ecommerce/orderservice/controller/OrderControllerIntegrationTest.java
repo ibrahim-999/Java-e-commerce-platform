@@ -60,6 +60,10 @@ class OrderControllerIntegrationTest extends BaseIntegrationTest {
     @MockBean
     private OrderService orderService;
 
+    // PaymentEventConsumer needs a KafkaTemplate bean — mock it so the context loads
+    @MockBean
+    private org.springframework.kafka.core.KafkaTemplate<String, String> kafkaTemplate;
+
     private Order testOrder;
 
     @BeforeEach
@@ -422,6 +426,140 @@ class OrderControllerIntegrationTest extends BaseIntegrationTest {
                     .andExpect(jsonPath("$.message").value("Cannot cancel a delivered order"));
 
             verify(orderService).cancelOrder(1L);
+        }
+    }
+
+    @Nested
+    @DisplayName("POST /api/orders/{id}/retry-payment")
+    class RetryPayment {
+
+        @Test
+        @DisplayName("should return 200 with success message when retry confirms order")
+        void shouldReturn200WhenRetrySucceeds() throws Exception {
+            Order confirmedOrder = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.CONFIRMED)
+                    .paymentId(50L).totalAmount(BigDecimal.valueOf(500))
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
+                    .build();
+            confirmedOrder.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Laptop").build());
+
+            when(orderService.retryPayment(1L, "CREDIT_CARD")).thenReturn(confirmedOrder);
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 1L)
+                            .param("paymentMethod", "CREDIT_CARD"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.message", containsString("order confirmed")))
+                    .andExpect(jsonPath("$.data.id").value(1))
+                    .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                    .andExpect(jsonPath("$.data.paymentId").value(50));
+
+            verify(orderService).retryPayment(1L, "CREDIT_CARD");
+        }
+
+        @Test
+        @DisplayName("should return 200 with failure message when retry payment fails")
+        void shouldReturn200WhenRetryFails() throws Exception {
+            Order failedOrder = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500))
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
+                    .build();
+            failedOrder.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Laptop").build());
+
+            when(orderService.retryPayment(1L, "PAYPAL")).thenReturn(failedOrder);
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 1L)
+                            .param("paymentMethod", "PAYPAL"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.message", containsString("PAYMENT_FAILED")))
+                    .andExpect(jsonPath("$.data.status").value("PAYMENT_FAILED"));
+
+            verify(orderService).retryPayment(1L, "PAYPAL");
+        }
+
+        @Test
+        @DisplayName("should use default CREDIT_CARD when paymentMethod not specified")
+        void shouldUseDefaultPaymentMethod() throws Exception {
+            Order confirmedOrder = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.CONFIRMED)
+                    .paymentId(50L).totalAmount(BigDecimal.valueOf(500))
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
+                    .build();
+            confirmedOrder.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Laptop").build());
+
+            when(orderService.retryPayment(1L, "CREDIT_CARD")).thenReturn(confirmedOrder);
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 1L))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+
+            verify(orderService).retryPayment(1L, "CREDIT_CARD");
+        }
+
+        @Test
+        @DisplayName("should return 400 when retrying non-PAYMENT_FAILED order")
+        void shouldReturn400WhenOrderNotPaymentFailed() throws Exception {
+            when(orderService.retryPayment(1L, "CREDIT_CARD"))
+                    .thenThrow(new IllegalArgumentException(
+                            "Can only retry payment for orders with PAYMENT_FAILED status. Current: CONFIRMED"));
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 1L))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.message", containsString("PAYMENT_FAILED")));
+        }
+
+        @Test
+        @DisplayName("should handle optimistic lock by reloading order")
+        void shouldHandleOptimisticLockException() throws Exception {
+            // retryPayment throws optimistic lock — Kafka consumer already confirmed it
+            when(orderService.retryPayment(1L, "CREDIT_CARD"))
+                    .thenThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(Order.class, 1L));
+
+            // getOrderById returns the already-confirmed order
+            Order confirmedOrder = Order.builder()
+                    .id(1L).userId(100L).status(OrderStatus.CONFIRMED)
+                    .paymentId(50L).totalAmount(BigDecimal.valueOf(500))
+                    .createdAt(LocalDateTime.now()).updatedAt(LocalDateTime.now())
+                    .build();
+            confirmedOrder.addItem(OrderItem.builder()
+                    .id(1L).productId(10L).quantity(1)
+                    .priceAtPurchase(BigDecimal.valueOf(500))
+                    .productNameSnapshot("Laptop").build());
+
+            when(orderService.getOrderById(1L)).thenReturn(confirmedOrder);
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 1L))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.message", containsString("order confirmed")))
+                    .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+
+            verify(orderService).retryPayment(1L, "CREDIT_CARD");
+            verify(orderService).getOrderById(1L);
+        }
+
+        @Test
+        @DisplayName("should return 404 when order not found")
+        void shouldReturn404WhenOrderNotFound() throws Exception {
+            when(orderService.retryPayment(99L, "CREDIT_CARD"))
+                    .thenThrow(new ResourceNotFoundException("Order", "id", 99L));
+
+            mockMvc.perform(post("/api/orders/{id}/retry-payment", 99L))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.message").value("Order not found with id: 99"));
         }
     }
 
