@@ -5,9 +5,11 @@ import com.ecommerce.orderservice.dto.CreateOrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
 import com.ecommerce.orderservice.dto.OrderStatusHistoryResponse;
 import com.ecommerce.orderservice.model.Order;
+import com.ecommerce.orderservice.model.OrderStatus;
 import com.ecommerce.orderservice.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -28,6 +30,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
+@Slf4j
 public class OrderController {
 
     private final OrderService orderService;
@@ -73,6 +76,32 @@ public class OrderController {
                 .map(OrderStatusHistoryResponse::fromEntity)
                 .toList();
         return ResponseEntity.ok(ApiResponse.success(history));
+    }
+
+    // POST /api/orders/{id}/retry-payment — retry payment for a PAYMENT_FAILED order.
+    // Part of the Saga pattern: when payment fails, stock is restored and the order
+    // is marked PAYMENT_FAILED. This endpoint re-reserves stock and retries payment.
+    //
+    // Race condition handled: the Kafka PaymentEventConsumer might confirm the order
+    // before this method's save completes, causing an optimistic lock exception.
+    // In that case, reload the order — it's already in the correct state.
+    @PostMapping("/{id}/retry-payment")
+    public ResponseEntity<ApiResponse<OrderResponse>> retryPayment(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "CREDIT_CARD") String paymentMethod) {
+
+        Order order;
+        try {
+            order = orderService.retryPayment(id, paymentMethod);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            // The Kafka consumer already confirmed this order — reload the current state
+            log.info("Optimistic lock on order {} during retry — Kafka consumer already updated it", id);
+            order = orderService.getOrderById(id);
+        }
+        String message = order.getStatus() == OrderStatus.CONFIRMED
+                ? "Payment retry successful — order confirmed"
+                : "Payment retry failed — order marked as PAYMENT_FAILED, stock restored";
+        return ResponseEntity.ok(ApiResponse.success(message, OrderResponse.fromEntity(order)));
     }
 
     // PUT /api/orders/{id}/cancel — cancel an order (restores stock)

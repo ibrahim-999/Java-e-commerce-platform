@@ -28,16 +28,29 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-// OrderService — the most complex service because it orchestrates multiple microservices.
+// OrderService — the SAGA ORCHESTRATOR for order creation.
 //
-// When a user places an order:
-//   1. Validate the user exists (call user-service)
-//   2. For each item: validate the product exists, get its price (call product-service)
-//   3. For each item: reduce stock (call product-service)
-//   4. Create the order with snapshotted prices
+// This service implements the Orchestration Saga Pattern:
+//   In a monolith, you'd use a database transaction to ensure consistency.
+//   In microservices, each service has its own database — no shared transactions.
+//   The Saga pattern solves this by breaking a distributed operation into steps,
+//   where each step has a COMPENSATING TRANSACTION that undoes it on failure.
 //
-// If any step fails, we need to restore stock for items already reserved.
-// This is called a "compensating transaction" — the microservices equivalent of a rollback.
+// Saga steps for order creation:
+//   Step 1: Validate user exists           → Compensation: none (read-only)
+//   Step 2: Reserve stock for each item    → Compensation: restoreProductStock()
+//   Step 3: Create order (PENDING)         → Compensation: mark PAYMENT_FAILED
+//   Step 4: Process payment                → Compensation: restore stock + mark PAYMENT_FAILED
+//
+// If payment fails after stock is reserved, the saga automatically:
+//   1. Restores all reserved stock (compensating transaction)
+//   2. Marks the order as PAYMENT_FAILED
+//   3. Publishes events so notification-service can inform the user
+//   4. The user can retry payment via POST /api/orders/{id}/retry-payment
+//
+// The saga also listens to Kafka payment-events for ASYNC compensation:
+//   If the synchronous payment call timed out but payment-service processed it later,
+//   the PaymentEventConsumer picks up the result and updates the order accordingly.
 //
 // @Slf4j — Lombok generates a `log` field. Equivalent to:
 //   private static final Logger log = LoggerFactory.getLogger(OrderService.class);
@@ -124,10 +137,16 @@ public class OrderService {
 
         order = orderRepository.save(order);
 
-        // Step 5: Initiate payment via payment-service.
-        // If payment fails, the order stays PENDING — the user can retry payment later.
-        // We don't roll back the order because the stock is already reserved.
-        // This is a common pattern: order creation and payment are separate concerns.
+        // Step 5: Initiate payment via payment-service (SAGA STEP 4).
+        //
+        // This is where the Saga pattern shines. Three outcomes:
+        //   A) Payment COMPLETED → order confirmed, everyone is happy
+        //   B) Payment FAILED   → COMPENSATE: restore stock, mark PAYMENT_FAILED
+        //   C) Service DOWN     → COMPENSATE: restore stock, mark PAYMENT_FAILED
+        //
+        // In case B/C, the user can retry via POST /api/orders/{id}/retry-payment.
+        // The Kafka PaymentEventConsumer also handles async results if the payment
+        // was actually processed but the synchronous call timed out.
         try {
             JsonNode paymentResult = initiatePayment(
                     order.getId(), request.getUserId(), totalAmount, request.getPaymentMethod());
@@ -139,16 +158,26 @@ public class OrderService {
 
             if ("COMPLETED".equals(paymentStatus)) {
                 order.changeStatus(OrderStatus.CONFIRMED, "Payment completed, paymentId: " + paymentId);
-                log.info("Payment completed for order {}, paymentId: {}", order.getId(), paymentId);
+                log.info("Saga SUCCESS: Order {} confirmed, paymentId: {}", order.getId(), paymentId);
             } else {
-                log.warn("Payment not completed for order {}. Payment status: {}", order.getId(), paymentStatus);
+                // Payment returned but not COMPLETED (e.g., FAILED after retries)
+                // SAGA COMPENSATION: restore stock and mark payment failed
+                log.warn("Saga COMPENSATING: Payment {} for order {}", paymentStatus, order.getId());
+                restoreStockForOrder(order);
+                order.changeStatus(OrderStatus.PAYMENT_FAILED,
+                        "Payment " + paymentStatus + ", stock restored. Retry with POST /api/orders/"
+                                + order.getId() + "/retry-payment");
             }
 
             order = orderRepository.save(order);
         } catch (Exception e) {
-            // Payment failed, but order is saved with PENDING status.
-            // The user can retry payment or an admin can investigate.
-            log.error("Payment initiation failed for order {}: {}", order.getId(), e.getMessage());
+            // Payment service unavailable or threw an error
+            // SAGA COMPENSATION: restore stock and mark payment failed
+            log.error("Saga COMPENSATING: Payment failed for order {}: {}", order.getId(), e.getMessage());
+            restoreStockForOrder(order);
+            order.changeStatus(OrderStatus.PAYMENT_FAILED,
+                    "Payment service error: " + e.getMessage() + ". Stock restored.");
+            order = orderRepository.save(order);
         }
 
         // Publish OrderPlacedEvent to Kafka — notification-service will pick it up
@@ -194,6 +223,93 @@ public class OrderService {
         return statusHistoryRepository.findByOrderIdOrderByChangedAtAsc(orderId);
     }
 
+    // ==================== RETRY PAYMENT (Saga Recovery) ====================
+    //
+    // When payment fails, the order is marked PAYMENT_FAILED and stock is restored.
+    // This endpoint lets the user try again: re-reserve stock, re-initiate payment.
+    // If it fails again, stock is restored again — the saga is fully idempotent.
+
+    @Transactional
+    public Order retryPayment(Long orderId, String paymentMethod) {
+        Order order = getOrderById(orderId);
+
+        if (order.getStatus() != OrderStatus.PAYMENT_FAILED) {
+            throw new IllegalArgumentException(
+                    "Can only retry payment for orders with PAYMENT_FAILED status. Current: " + order.getStatus());
+        }
+
+        // Re-reserve stock (it was restored when payment failed)
+        log.info("Saga RETRY: Re-reserving stock for order {}", orderId);
+        List<OrderItem> items = order.getItems();
+        List<Long> reservedProductIds = new ArrayList<>();
+        List<Integer> reservedQuantities = new ArrayList<>();
+
+        try {
+            for (OrderItem item : items) {
+                reduceProductStock(item.getProductId(), item.getQuantity());
+                reservedProductIds.add(item.getProductId());
+                reservedQuantities.add(item.getQuantity());
+            }
+        } catch (Exception e) {
+            // Stock reservation failed — restore any partially reserved items
+            log.error("Saga RETRY failed at stock reservation for order {}: {}", orderId, e.getMessage());
+            for (int i = 0; i < reservedProductIds.size(); i++) {
+                try {
+                    restoreProductStock(reservedProductIds.get(i), reservedQuantities.get(i));
+                } catch (Exception rollbackEx) {
+                    log.error("Failed to restore stock for product {}: {}",
+                            reservedProductIds.get(i), rollbackEx.getMessage());
+                }
+            }
+            throw e;
+        }
+
+        // Re-attempt payment
+        order.changeStatus(OrderStatus.PENDING, "Payment retry initiated");
+
+        try {
+            JsonNode paymentResult = initiatePayment(
+                    orderId, order.getUserId(), order.getTotalAmount(), paymentMethod);
+
+            Long paymentId = paymentResult.get("data").get("id").asLong();
+            String paymentStatus = paymentResult.get("data").get("status").asText();
+
+            order.setPaymentId(paymentId);
+
+            if ("COMPLETED".equals(paymentStatus)) {
+                order.changeStatus(OrderStatus.CONFIRMED, "Payment completed on retry, paymentId: " + paymentId);
+                log.info("Saga RETRY SUCCESS: Order {} confirmed, paymentId: {}", orderId, paymentId);
+            } else {
+                log.warn("Saga RETRY COMPENSATING: Payment {} for order {}", paymentStatus, orderId);
+                restoreStockForOrder(order);
+                order.changeStatus(OrderStatus.PAYMENT_FAILED,
+                        "Payment " + paymentStatus + " on retry, stock restored");
+            }
+        } catch (Exception e) {
+            log.error("Saga RETRY COMPENSATING: Payment failed for order {}: {}", orderId, e.getMessage());
+            restoreStockForOrder(order);
+            order.changeStatus(OrderStatus.PAYMENT_FAILED,
+                    "Payment retry failed: " + e.getMessage() + ". Stock restored.");
+        }
+
+        publishOrderPlacedEvent(order);
+        return orderRepository.save(order);
+    }
+
+    // Helper: restore stock for all items in an order (saga compensation step)
+    private void restoreStockForOrder(Order order) {
+        for (OrderItem item : order.getItems()) {
+            try {
+                restoreProductStock(item.getProductId(), item.getQuantity());
+                log.info("Saga COMPENSATION: Restored {} units of product {}",
+                        item.getQuantity(), item.getProductId());
+            } catch (Exception e) {
+                log.error("CRITICAL: Failed to restore stock for product {} during saga compensation: {}",
+                        item.getProductId(), e.getMessage());
+            }
+        }
+    }
+
     // ==================== CANCEL ====================
 
     @Transactional
@@ -207,14 +323,10 @@ public class OrderService {
             throw new IllegalArgumentException("Cannot cancel a delivered order");
         }
 
-        // Restore stock for each item
-        for (OrderItem item : order.getItems()) {
-            try {
-                restoreProductStock(item.getProductId(), item.getQuantity());
-            } catch (Exception e) {
-                log.error("Failed to restore stock for product {} during cancellation: {}",
-                        item.getProductId(), e.getMessage());
-            }
+        // PAYMENT_FAILED orders already had their stock restored — no need to restore again.
+        // Only restore stock for PENDING, CONFIRMED, or SHIPPED orders.
+        if (order.getStatus() != OrderStatus.PAYMENT_FAILED) {
+            restoreStockForOrder(order);
         }
 
         order.changeStatus(OrderStatus.CANCELLED, "Order cancelled by user");
