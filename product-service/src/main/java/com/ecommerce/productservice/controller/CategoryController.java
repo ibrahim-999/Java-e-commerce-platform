@@ -2,7 +2,6 @@ package com.ecommerce.productservice.controller;
 
 import com.ecommerce.productservice.dto.ApiResponse;
 import com.ecommerce.productservice.dto.CategoryResponse;
-import com.ecommerce.productservice.model.Category;
 import com.ecommerce.productservice.repository.CategoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

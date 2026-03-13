@@ -1,0 +1,348 @@
+# ==================== PostgreSQL Databases ====================
+#
+# We run 4 PostgreSQL instances — one per service that needs a database.
+# This follows the "database-per-service" microservices pattern.
+#
+# Each PostgreSQL instance has THREE Kubernetes resources:
+#   1. PersistentVolumeClaim (PVC) — requests storage that survives Pod restarts
+#   2. Deployment — declares "run 1 replica of PostgreSQL"
+#   3. Service — gives the database a stable DNS name
+#
+# PERSISTENT VOLUME CLAIMS (PVCs):
+#   Without a PVC, if the PostgreSQL Pod restarts, ALL DATA IS LOST.
+#   A PVC asks Kubernetes: "give me 1GB of persistent storage."
+#   Kubernetes allocates a PersistentVolume (PV) — actual disk space.
+#   The Pod mounts this PV at /var/lib/postgresql/data.
+#   Even if the Pod dies and is recreated, the PV still has the data.
+#
+#   In Docker Compose, this was: volumes: [user-db-data:/var/lib/postgresql/data]
+#   In Kubernetes, PVCs are the equivalent.
+
+# ==================== User Database ====================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: user-db-pvc
+  namespace: ecommerce
+spec:
+  accessModes:
+    - ReadWriteOnce          # Only one Pod can mount this volume at a time
+  resources:
+    requests:
+      storage: 1Gi           # Request 1GB of disk space
+  # storageClassName is omitted — minikube uses "standard" by default,
+  # which provisions storage automatically (dynamic provisioning)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-db
+  namespace: ecommerce
+  labels:
+    app: user-db
+spec:
+  replicas: 1                # Databases usually run as 1 replica (scaling DBs is complex)
+  selector:
+    matchLabels:
+      app: user-db           # This Deployment manages Pods with label app=user-db
+  template:
+    # "template" defines the Pod specification — what container(s) to run
+    metadata:
+      labels:
+        app: user-db         # Labels on the Pod (must match selector above)
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine     # Alpine = smaller image (~80MB vs ~400MB)
+          ports:
+            - containerPort: 5432       # PostgreSQL default port
+          env:
+            - name: POSTGRES_DB
+              value: "users_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: user-db-storage
+              mountPath: /var/lib/postgresql/data    # Where PostgreSQL stores data
+          # Readiness probe: Kubernetes won't send traffic until this passes
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Liveness probe: Kubernetes restarts the Pod if this fails
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: user-db-storage
+          persistentVolumeClaim:
+            claimName: user-db-pvc     # Reference the PVC defined above
+---
+# Service: gives user-db a stable DNS name.
+# Other Pods can reach it at: user-db:5432 (within the ecommerce namespace)
+# or user-db.ecommerce.svc.cluster.local:5432 (fully qualified)
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-db
+  namespace: ecommerce
+spec:
+  selector:
+    app: user-db              # Route traffic to Pods with this label
+  ports:
+    - port: 5432              # Port exposed by the Service
+      targetPort: 5432        # Port on the Pod to forward to
+  clusterIP: None             # "Headless" service — direct DNS to Pod IP
+  # ClusterIP: None means this is a "headless" Service.
+  # Normal Services get a virtual IP that load-balances across Pods.
+  # Headless Services skip the virtual IP and resolve DNS directly to Pod IPs.
+  # For databases with 1 replica, headless is simpler and avoids an extra hop.
+
+# ==================== Product Database ====================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: product-db-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-db
+  namespace: ecommerce
+  labels:
+    app: product-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-db
+  template:
+    metadata:
+      labels:
+        app: product-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "products_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: product-db-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: product-db-storage
+          persistentVolumeClaim:
+            claimName: product-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-db
+  namespace: ecommerce
+spec:
+  selector:
+    app: product-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+# ==================== Order Database ====================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: order-db-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-db
+  namespace: ecommerce
+  labels:
+    app: order-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-db
+  template:
+    metadata:
+      labels:
+        app: order-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "orders_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: order-db-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: order-db-storage
+          persistentVolumeClaim:
+            claimName: order-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-db
+  namespace: ecommerce
+spec:
+  selector:
+    app: order-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+# ==================== Payment Database ====================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: payment-db-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-db
+  namespace: ecommerce
+  labels:
+    app: payment-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-db
+  template:
+    metadata:
+      labels:
+        app: payment-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "payments_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: payment-db-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "admin"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: payment-db-storage
+          persistentVolumeClaim:
+            claimName: payment-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-db
+  namespace: ecommerce
+spec:
+  selector:
+    app: payment-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None

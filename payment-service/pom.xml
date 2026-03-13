@@ -66,6 +66,13 @@
             <artifactId>micrometer-tracing-bridge-brave</artifactId>
         </dependency>
 
+        <!-- Micrometer Prometheus Registry — exposes metrics at /actuator/prometheus
+             in a format that Prometheus can scrape. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- Zipkin Reporter — sends trace data to a Zipkin server for visualization.
              Zipkin provides a UI where you can see the full request timeline:
              which services were called, how long each took, and where failures happened. -->
@@ -208,6 +215,22 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <!-- Checkstyle — enforces coding style rules defined in ../checkstyle.xml.
+                 Catches real problems (unused imports, naming violations, empty catch blocks)
+                 without being annoying about style preferences.
+                 Run: mvn checkstyle:check
+                 The CI pipeline runs this on every PR to keep code quality consistent. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <configLocation>../checkstyle.xml</configLocation>
+                    <consoleOutput>true</consoleOutput>
+                    <failsOnError>true</failsOnError>
+                    <linkXRef>false</linkXRef>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

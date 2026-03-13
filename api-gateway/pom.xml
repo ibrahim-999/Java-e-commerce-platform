@@ -93,6 +93,13 @@
             <artifactId>micrometer-tracing-bridge-brave</artifactId>
         </dependency>
 
+        <!-- Micrometer Prometheus Registry — exposes metrics at /actuator/prometheus
+             in a format that Prometheus can scrape. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- Zipkin Reporter — sends trace data to a Zipkin server for visualization.
              Zipkin provides a UI where you can see the full request timeline:
              which services were called, how long each took, and where failures happened. -->

@@ -29,6 +29,7 @@ public class SecurityConfig {
                         // Allow Eureka clients to register without auth
                         // (in production, you'd use mutual TLS or API keys instead)
                         .requestMatchers("/eureka/**").permitAll()
+                        .requestMatchers("/actuator/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .httpBasic(Customizer.withDefaults());

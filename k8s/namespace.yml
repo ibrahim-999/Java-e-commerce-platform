@@ -1,0 +1,30 @@
+# ==================== Namespace ====================
+#
+# A Namespace is like a virtual cluster inside your Kubernetes cluster.
+# It isolates resources — Pods, Services, ConfigMaps, etc. — so they
+# don't collide with resources in other namespaces.
+#
+# Think of it like a folder on your computer:
+#   - "default" namespace = your desktop (things go here if you don't specify)
+#   - "ecommerce" namespace = a dedicated folder for our platform
+#   - "kube-system" namespace = Kubernetes internal stuff (don't touch)
+#
+# WHY use a namespace?
+#   1. Organization: all 8 services + infrastructure live together
+#   2. Isolation: if you deploy another project, it won't interfere
+#   3. Resource quotas: you can limit CPU/memory per namespace
+#   4. Easy cleanup: `kubectl delete namespace ecommerce` removes EVERYTHING
+#
+# Usage:
+#   kubectl apply -f k8s/namespace.yml
+#   kubectl get namespaces
+#   kubectl get all -n ecommerce       # List everything in our namespace
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecommerce
+  labels:
+    # Labels are key-value pairs for organizing and selecting resources.
+    # They don't change behavior — they're just metadata for humans and tools.
+    app.kubernetes.io/part-of: ecommerce-platform

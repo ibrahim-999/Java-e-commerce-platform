@@ -1,0 +1,92 @@
+<!DOCTYPE module PUBLIC
+  "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+  "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  Checkstyle Configuration for E-Commerce Platform
+
+  This file defines the coding style rules enforced by the CI pipeline.
+  When you run `mvn checkstyle:check`, Checkstyle scans your Java files
+  and reports any violations.
+
+  We use a RELAXED configuration — it catches real problems without being
+  annoying about style preferences. The goal is to catch bugs and enforce
+  consistency, not to argue about indentation.
+
+  Rules included:
+    - No wildcard imports (import java.util.* → use specific imports)
+    - No unused imports
+    - Naming conventions (camelCase for methods, PascalCase for classes)
+    - No empty blocks (catch blocks must have at least a comment)
+    - Proper use of @Override annotation
+    - No star imports
+-->
+<module name="Checker">
+
+  <!-- Allow suppression comments in code: // CHECKSTYLE:OFF / // CHECKSTYLE:ON -->
+  <module name="SuppressWarningsFilter"/>
+
+  <!-- Maximum line length: 200 characters (generous — we're not writing punch cards) -->
+  <module name="LineLength">
+    <property name="max" value="200"/>
+    <property name="ignorePattern" value="^package.*|^import.*|a]$ href|href|http://|https://|ftp://"/>
+  </module>
+
+  <module name="TreeWalker">
+
+    <!-- Allow @SuppressWarnings to disable specific checks -->
+    <module name="SuppressWarningsHolder"/>
+
+    <!-- ==================== Imports ==================== -->
+
+    <!-- No wildcard imports: import java.util.* is lazy and hides what you actually use -->
+    <module name="AvoidStarImport"/>
+
+    <!-- No unused imports: dead imports clutter the file -->
+    <module name="UnusedImports"/>
+
+    <!-- No redundant imports (importing java.lang.String when it's auto-imported) -->
+    <module name="RedundantImport"/>
+
+    <!-- ==================== Naming ==================== -->
+
+    <!-- Class names must be PascalCase: UserService, not user_service or userService -->
+    <module name="TypeName"/>
+
+    <!-- Method names must be camelCase: getUserById, not GetUserById or get_user_by_id -->
+    <module name="MethodName">
+      <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+    </module>
+
+    <!-- Constants (static final) must be UPPER_SNAKE_CASE: MAX_RETRIES, not maxRetries -->
+    <!-- But allow logger names like "log" (Lombok @Slf4j generates a lowercase logger) -->
+    <module name="ConstantName">
+      <property name="format" value="^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$|^log$|^logger$|^serialVersionUID$"/>
+    </module>
+
+    <!-- ==================== Code Quality ==================== -->
+
+    <!-- Empty catch blocks are dangerous — they silently swallow exceptions.
+         At minimum, add a comment explaining WHY you're ignoring the exception. -->
+    <module name="EmptyCatchBlock">
+      <property name="exceptionVariableName" value="expected|ignore"/>
+    </module>
+
+    <!-- Use @Override when overriding a method — prevents silent bugs when
+         the parent method signature changes (your method would stop overriding
+         without you knowing). -->
+    <module name="MissingOverride"/>
+
+    <!-- One top-level class per file — standard Java convention -->
+    <module name="OneTopLevelClass"/>
+
+    <!-- No fall-through in switch statements without a comment.
+         Missing break/return between cases is a common source of bugs. -->
+    <module name="FallThrough"/>
+
+    <!-- Equals and hashCode must be overridden TOGETHER.
+         Overriding one without the other breaks HashMap/HashSet behavior. -->
+    <module name="EqualsHashCode"/>
+
+  </module>
+</module>

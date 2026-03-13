@@ -1,0 +1,59 @@
+# ==================== ConfigMap ====================
+#
+# A ConfigMap stores NON-SECRET configuration data as key-value pairs.
+# Pods can consume ConfigMaps as:
+#   1. Environment variables (what we do here)
+#   2. Mounted files (useful for config files like application.properties)
+#   3. Command-line arguments
+#
+# WHY ConfigMaps instead of hardcoding in Deployment YAML?
+#   - One ConfigMap, many Deployments: change a value once, all services see it
+#   - Environment-specific: swap ConfigMaps between dev/staging/prod
+#   - No rebuild needed: change config without rebuilding Docker images
+#
+# IMPORTANT: ConfigMaps are NOT for passwords or tokens.
+# Use Secrets for sensitive data (see secrets.yml).
+#
+# In Docker Compose, this was the `environment:` section of each service.
+# In Kubernetes, we extract shared config into a ConfigMap and reference it.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/part-of: ecommerce-platform
+data:
+  # ---- Database Configuration ----
+  # Each service gets its own database URL.
+  # In Docker Compose, we used container names (user-db:5432).
+  # In Kubernetes, we use Service names (user-db.ecommerce.svc.cluster.local).
+  # The short form (user-db) works within the same namespace.
+  USER_DB_URL: "jdbc:postgresql://user-db:5432/users_db"
+  PRODUCT_DB_URL: "jdbc:postgresql://product-db:5432/products_db"
+  ORDER_DB_URL: "jdbc:postgresql://order-db:5432/orders_db"
+  PAYMENT_DB_URL: "jdbc:postgresql://payment-db:5432/payments_db"
+
+  # ---- Service Discovery ----
+  # Eureka server URL — services register here on startup.
+  # In Kubernetes, the Eureka Service name becomes the hostname.
+  EUREKA_URL: "http://discovery-server:8761/eureka/"
+
+  # ---- Config Server ----
+  CONFIG_SERVER_URL: "http://config-server:8888"
+
+  # ---- Kafka ----
+  # Kafka runs as a Service named "kafka" in our namespace.
+  # Port 9092 is the standard Kafka broker port.
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+
+  # ---- Redis ----
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # ---- Zipkin ----
+  ZIPKIN_URL: "http://zipkin:9411/api/v2/spans"
+
+  # ---- Spring Profiles ----
+  SPRING_PROFILES_ACTIVE: "docker"

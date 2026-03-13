@@ -1,0 +1,171 @@
+# ==================== CI Pipeline — Test & Validate ====================
+#
+# This workflow runs automatically on:
+#   - Every pull request to main (to validate changes before merging)
+#   - Every push to main (to ensure main is always green)
+#
+# What it does:
+#   1. Checks out the code
+#   2. Sets up Java 21
+#   3. Caches Maven dependencies (so they don't re-download every time)
+#   4. Runs tests for ALL 5 business services in parallel
+#   5. JaCoCo enforces 80% coverage — if any service fails, the whole pipeline fails
+#   6. Uploads coverage reports as artifacts (downloadable from the Actions tab)
+#
+# HOW GITHUB ACTIONS WORKS:
+#   - A "workflow" is a YAML file in .github/workflows/
+#   - A workflow has one or more "jobs" (each runs on its own virtual machine)
+#   - A job has "steps" (commands that run sequentially)
+#   - Jobs run in PARALLEL by default (unless you add "needs: other-job")
+#   - GitHub provides free Linux VMs with Docker pre-installed
+#
+# KEY CONCEPT: "Matrix strategy"
+#   Instead of writing 5 separate jobs (one per service), we use a matrix.
+#   GitHub creates 5 parallel jobs from the same template, each with a
+#   different service name. This is like a for-loop over services.
+
+name: CI — Test & Validate
+
+# ==================== TRIGGERS ====================
+# WHEN does this workflow run?
+on:
+  # On pull requests targeting main — validates changes before merge
+  pull_request:
+    branches: [ main ]
+  # On push to main — ensures main is always passing
+  push:
+    branches: [ main ]
+
+# ==================== JOBS ====================
+jobs:
+
+  # ---------- Job: Test all services ----------
+  # Uses a matrix strategy to test 5 services in parallel.
+  # Each service gets its own VM, its own Java, its own Docker.
+  test:
+    name: Test ${{ matrix.service }}
+    runs-on: ubuntu-latest          # GitHub-hosted Linux VM (free tier)
+
+    # MATRIX STRATEGY: creates 5 parallel jobs, one per service.
+    # ${{ matrix.service }} is replaced with each service name.
+    strategy:
+      # fail-fast: false means if one service fails, the others keep running.
+      # This way you see ALL failures at once, not just the first one.
+      fail-fast: false
+      matrix:
+        service:
+          - user-service
+          - product-service
+          - order-service
+          - payment-service
+          - notification-service
+
+    steps:
+      # Step 1: Checkout the code from GitHub into the VM
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Java 21 (Temurin distribution — same as your local machine)
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Step 3: Cache Maven dependencies
+      # WHY: Maven downloads ~200MB of JARs on first run. Caching saves 2-3 minutes.
+      # HOW: GitHub stores the ~/.m2/repository folder between runs.
+      # The cache key includes the pom.xml hash — if dependencies change, cache refreshes.
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Step 4: Run tests with Maven
+      # -B = batch mode (no interactive prompts, cleaner output)
+      # -q = quiet mode (less noise, only shows errors and test results)
+      # JaCoCo runs automatically during `mvn test` (configured in pom.xml)
+      # and FAILS the build if coverage drops below 80%.
+      - name: Run tests — ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: mvn test -B
+
+      # Step 5: Upload JaCoCo coverage report as an artifact
+      # Artifacts are downloadable files attached to the workflow run.
+      # You can find them in the Actions tab on GitHub.
+      - name: Upload coverage report
+        if: always()      # Upload even if tests fail — you want to see the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: ${{ matrix.service }}/target/site/jacoco/
+          retention-days: 14    # Keep for 14 days, then auto-delete
+
+  # ---------- Job: Build Docker images ----------
+  # Runs AFTER all tests pass. Builds Docker images for all 8 services
+  # to verify the Dockerfiles are valid and the JARs package correctly.
+  # This catches "compiles locally but fails in Docker" issues.
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test               # Only runs if ALL test jobs passed
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Docker Compose builds all images from the Dockerfiles.
+      # --no-start: build the images but don't actually start the containers.
+      # We just want to verify the build succeeds.
+      - name: Build all Docker images
+        run: docker compose build
+
+  # ---------- Job: Code quality check ----------
+  # Runs a linter (Checkstyle) on the code to enforce consistent style.
+  # Checkstyle checks things like:
+  #   - Naming conventions (camelCase for methods, PascalCase for classes)
+  #   - Import order and unused imports
+  #   - Missing Javadoc on public methods
+  #   - Line length limits
+  #   - Proper indentation
+  lint:
+    name: Code Quality — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - user-service
+          - product-service
+          - order-service
+          - payment-service
+          - notification-service
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Compile without tests, then run Checkstyle.
+      # We use the Maven Checkstyle plugin which is added to each service's pom.xml.
+      # -Dcheckstyle.violationSeverity=warning: fail on warnings too (strict mode).
+      - name: Run Checkstyle
+        working-directory: ${{ matrix.service }}
+        run: mvn compile checkstyle:check -B -q

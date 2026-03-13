@@ -1,0 +1,20 @@
+# ==================== Grafana Dashboard Provisioning ====================
+#
+# This file tells Grafana WHERE to find dashboard JSON files.
+# On startup, Grafana loads all .json files from the specified folder
+# and creates the dashboards automatically — no manual import needed.
+#
+# Without this, you'd have to manually import dashboards via the Grafana UI.
+
+apiVersion: 1
+
+providers:
+  - name: 'E-Commerce Platform'
+    orgId: 1
+    folder: 'E-Commerce Platform'        # Dashboards appear under this folder in Grafana
+    type: file
+    disableDeletion: false               # Allow deleting via UI
+    editable: true                       # Allow editing via UI
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

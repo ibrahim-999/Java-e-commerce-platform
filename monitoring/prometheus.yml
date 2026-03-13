@@ -1,0 +1,88 @@
+# ==================== Prometheus Configuration ====================
+#
+# Prometheus is a PULL-based monitoring system. It periodically "scrapes"
+# (fetches) metrics from each service's /actuator/prometheus endpoint.
+#
+# How it works:
+#   1. Each Spring Boot service exposes metrics at /actuator/prometheus
+#      (thanks to micrometer-registry-prometheus dependency)
+#   2. Prometheus sends a GET request to that endpoint every 15 seconds
+#   3. The response contains hundreds of metrics in a text format, e.g.:
+#        http_server_requests_seconds_count{method="GET",uri="/api/products",status="200"} 142
+#        jvm_memory_used_bytes{area="heap"} 134217728
+#   4. Prometheus stores this data as TIME SERIES (metric + timestamp + value)
+#   5. Grafana queries Prometheus to build dashboards and graphs
+#
+# Key concepts:
+#   - scrape_interval: how often Prometheus fetches metrics (15s = every 15 seconds)
+#   - targets: the host:port addresses of your services
+#   - job_name: a label to group related targets (e.g., all business services)
+#   - metrics_path: the URL path to scrape (default: /metrics, Spring uses /actuator/prometheus)
+
+global:
+  scrape_interval: 15s       # How often to scrape targets (every 15 seconds)
+  evaluation_interval: 15s   # How often to evaluate alerting rules
+
+scrape_configs:
+
+  # --- Prometheus self-monitoring ---
+  # Prometheus scrapes its OWN metrics too (meta-monitoring).
+  # Useful to check: "Is Prometheus itself healthy? How many targets are up?"
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # --- Spring Boot Business Services ---
+  # These are the services that handle your actual business logic.
+  # Each one exposes /actuator/prometheus with metrics like:
+  #   - http_server_requests_seconds_count (request count by endpoint)
+  #   - http_server_requests_seconds_sum (total response time)
+  #   - jvm_memory_used_bytes (how much RAM the JVM is using)
+  #   - hikaricp_connections_active (database connection pool usage)
+  #   - cache_gets_total{result="hit"} (Redis cache hit rate)
+
+  - job_name: 'user-service'
+    metrics_path: /actuator/prometheus
+    scheme: https                          # user-service uses HTTPS
+    tls_config:
+      insecure_skip_verify: true           # Accept self-signed cert
+    static_configs:
+      - targets: ['user-service:8081']
+
+  - job_name: 'product-service'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['product-service:8082']
+
+  - job_name: 'order-service'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['order-service:8083']
+
+  - job_name: 'payment-service'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['payment-service:8084']
+
+  - job_name: 'notification-service'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['notification-service:8085']
+
+  # --- Infrastructure Services ---
+  # Gateway, Discovery, and Config servers also expose metrics.
+
+  - job_name: 'api-gateway'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['api-gateway:8060']
+
+  - job_name: 'discovery-server'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['discovery-server:8761']
+
+  - job_name: 'config-server'
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['config-server:8888']

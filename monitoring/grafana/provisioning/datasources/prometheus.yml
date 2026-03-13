@@ -1,0 +1,24 @@
+# ==================== Grafana Datasource Provisioning ====================
+#
+# This file tells Grafana to automatically configure Prometheus as a data source
+# on first startup — no manual setup needed.
+#
+# Without this file, you'd have to:
+#   1. Open Grafana UI
+#   2. Go to Settings → Data Sources → Add
+#   3. Select Prometheus
+#   4. Enter the URL
+#   5. Click Save & Test
+#
+# With this file, it's already done when Grafana starts.
+# This is called "provisioning" — pre-configuring Grafana via files.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy                              # Grafana backend fetches data (not browser)
+    url: http://prometheus:9090                # Prometheus container address (Docker DNS)
+    isDefault: true                            # Use this as the default datasource
+    editable: true                             # Allow editing in UI

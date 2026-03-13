@@ -1,5 +1,11 @@
 # E-Commerce Platform
 
+[![CI — Test & Validate](https://github.com/ibrahim-999/Java-e-commerce-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ibrahim-999/Java-e-commerce-platform/actions/workflows/ci.yml)
+[![CD — Build & Push Images](https://github.com/ibrahim-999/Java-e-commerce-platform/actions/workflows/cd.yml/badge.svg)](https://github.com/ibrahim-999/Java-e-commerce-platform/actions/workflows/cd.yml)
+![Java 21](https://img.shields.io/badge/Java-21-blue)
+![Spring Boot 3.4](https://img.shields.io/badge/Spring%20Boot-3.4.3-green)
+![Coverage 80%+](https://img.shields.io/badge/Coverage-80%25%2B-brightgreen)
+
 A production-grade microservices e-commerce platform built with Java 21 and Spring Boot 3.4.
 
 Eight independent services communicate over REST and Kafka, orchestrated through an API Gateway with Eureka service discovery, centralized configuration, and distributed tracing via Zipkin.

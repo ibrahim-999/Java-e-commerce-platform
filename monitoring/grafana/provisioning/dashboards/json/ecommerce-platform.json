@@ -1,0 +1,193 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Service Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "up{job=~\"user-service|product-service|order-service|payment-service|notification-service|api-gateway|discovery-server|config-server\"}", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "HTTP Request Rate (req/sec per service)",
+      "description": "How many HTTP requests each service is handling per second, averaged over 5 minutes.\nThis is the most important metric — it tells you how busy each service is.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job)", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "HTTP Response Time — 95th Percentile (ms)",
+      "description": "95% of requests complete faster than this value.\nIf this spikes, users are experiencing slow responses.\nNormal: under 200ms. Warning: over 500ms. Critical: over 1s.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 1000 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job, le)) * 1000", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "HTTP Error Rate (5xx errors/sec)",
+      "description": "Rate of server errors (HTTP 500+). This should be zero or near-zero.\nAny sustained errors indicate a bug or infrastructure problem.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20 },
+          "unit": "reqps",
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\", job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job)", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "JVM Heap Memory Used (MB)",
+      "description": "How much heap memory (RAM) each service's JVM is using.\nIf a service keeps climbing toward its max, it may run out of memory and crash (OOM).\nHealthy: stays well below max with periodic drops (garbage collection).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 },
+          "unit": "decmbytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Redis Cache Hit Rate (%)",
+      "description": "Percentage of cache lookups that found data in Redis (hits) vs had to go to the database (misses).\nHigher is better — 80%+ means your cache is working well.\nLow hit rate means cache TTL may be too short or cache is cold.",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(cache_gets_total{result=\"hit\", job=~\"user-service|product-service\"}) by (job) / (sum(cache_gets_total{result=\"hit\", job=~\"user-service|product-service\"}) by (job) + sum(cache_gets_total{result=\"miss\", job=~\"user-service|product-service\"}) by (job)) * 100", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Database Connection Pool — Active Connections",
+      "description": "How many database connections are actively being used (out of the pool).\nHikariCP manages a pool of reusable connections to PostgreSQL.\nIf active connections stay near the max pool size, queries will start queuing.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "hikaricp_connections_active{job=~\"user-service|product-service|order-service|payment-service\"}", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "JVM Threads — Active Count",
+      "description": "Number of active threads in each service's JVM.\nSpring Boot uses threads to handle HTTP requests (one thread per request by default).\nA spike in thread count usually means many concurrent requests or blocked I/O.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "jvm_threads_live_threads{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "JVM Garbage Collection Pause Time (ms/sec)",
+      "description": "Time spent in garbage collection per second.\nGC pauses briefly freeze your application (stop-the-world pauses).\nFrequent or long GC pauses = your service needs more memory or is creating too many objects.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "rate(jvm_gc_pause_seconds_sum[5m]) * 1000", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "title": "Gateway — Request Rate by Route",
+      "description": "How many requests the API Gateway is routing to each backend service.\nThis shows the traffic distribution across your microservices.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(spring_cloud_gateway_requests_seconds_count[5m])) by (routeId)", "legendFormat": "{{routeId}}", "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["ecommerce", "spring-boot", "microservices"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "E-Commerce Platform Overview",
+  "uid": "ecommerce-overview",
+  "version": 1
+}

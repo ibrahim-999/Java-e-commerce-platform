@@ -1,0 +1,80 @@
+# ==================== Ingress ====================
+#
+# An Ingress is Kubernetes-native HTTP routing — it's like a reverse proxy
+# (Nginx, HAProxy) that routes external traffic to internal Services.
+#
+# WITHOUT Ingress:
+#   - Each service needs its own NodePort or LoadBalancer
+#   - You'd have: http://minikube-ip:30080 for gateway
+#                  http://minikube-ip:30081 for user-service
+#                  http://minikube-ip:30082 for product-service
+#   - Messy. Multiple ports to remember.
+#
+# WITH Ingress:
+#   - One entry point: http://ecommerce.local
+#   - Path-based routing: /api/** → api-gateway
+#   - Host-based routing: zipkin.local → zipkin service
+#   - SSL termination: HTTPS → Ingress → HTTP inside cluster
+#
+# HOW IT WORKS:
+#   1. You write an Ingress manifest (this file)
+#   2. An "Ingress Controller" (Nginx, Traefik, etc.) reads it
+#   3. The controller configures itself to route traffic accordingly
+#   4. minikube has a built-in Nginx Ingress Controller
+#
+# ENABLE: minikube addons enable ingress
+# Then add to /etc/hosts: <minikube-ip> ecommerce.local zipkin.local eureka.local
+#
+# For our learning project, we're routing everything through the API Gateway
+# (which already handles routing), so the Ingress just points to the gateway.
+# We also expose Eureka and Zipkin dashboards for convenience.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ecommerce-ingress
+  namespace: ecommerce
+  annotations:
+    # nginx.ingress.kubernetes.io/rewrite-target: tells the Ingress Controller
+    # to rewrite the URL path before forwarding to the backend.
+    # Without rewrite: /api/users → gateway receives /api/users (what we want)
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"    # Don't force HTTPS (dev mode)
+spec:
+  ingressClassName: nginx    # Use the Nginx Ingress Controller
+  rules:
+    # Route: ecommerce.local → API Gateway
+    # All API traffic goes through the gateway, which routes to individual services
+    - host: ecommerce.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8060
+
+    # Route: zipkin.local → Zipkin tracing UI
+    - host: zipkin.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: zipkin
+                port:
+                  number: 9411
+
+    # Route: eureka.local → Eureka dashboard
+    - host: eureka.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: discovery-server
+                port:
+                  number: 8761

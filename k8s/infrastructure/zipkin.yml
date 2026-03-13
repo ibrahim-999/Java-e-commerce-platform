@@ -1,0 +1,57 @@
+# ==================== Zipkin ====================
+#
+# Zipkin is a distributed tracing system. Every service in our platform
+# sends trace data (via Micrometer + Brave) to Zipkin, which provides:
+#   1. A visual timeline of request flow across services
+#   2. Latency breakdown per service call
+#   3. Error identification — see which service in the chain failed
+#
+# Example: when you create an order:
+#   Client → Gateway → order-service → product-service (stock check)
+#                                     → payment-service (charge)
+#                                     → Kafka (event)
+#
+# Zipkin shows this entire chain as a single "trace" with timing for each hop.
+# Access the Zipkin UI at http://zipkin:9411
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zipkin
+  namespace: ecommerce
+  labels:
+    app: zipkin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zipkin
+  template:
+    metadata:
+      labels:
+        app: zipkin
+    spec:
+      containers:
+        - name: zipkin
+          image: openzipkin/zipkin:latest
+          ports:
+            - containerPort: 9411
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9411
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zipkin
+  namespace: ecommerce
+spec:
+  selector:
+    app: zipkin
+  ports:
+    - port: 9411
+      targetPort: 9411

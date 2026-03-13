@@ -1,0 +1,82 @@
+# ==================== Redis ====================
+#
+# Redis is an in-memory key-value store used for CACHING.
+# user-service and product-service use @Cacheable/@CacheEvict
+# to cache frequently-requested data (user profiles, product listings).
+#
+# Redis is blazing fast (~100,000 operations/second) because data
+# lives in RAM, not on disk. The tradeoff: if Redis restarts, cache is lost.
+# That's fine — the cache will be rebuilt from the database on next request.
+#
+# We use a PVC for Redis even though cache loss is acceptable, because
+# it demonstrates the PersistentVolumeClaim pattern. In production,
+# you'd decide based on whether you use Redis for caching only (no PVC needed)
+# or for session storage / rate limiting (PVC recommended).
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ecommerce
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+          # --maxmemory 128mb: cap Redis at 128MB of RAM
+          # --maxmemory-policy allkeys-lru: when memory is full, evict Least Recently Used keys
+          # LRU = "throw out the data nobody's been asking for"
+          volumeMounts:
+            - name: redis-storage
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: redis-storage
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ecommerce
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

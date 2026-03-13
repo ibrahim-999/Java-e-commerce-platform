@@ -1,0 +1,96 @@
+# ==================== CD Pipeline — Build & Push Docker Images ====================
+#
+# This workflow runs ONLY when code is pushed to main (after a PR is merged).
+# It builds Docker images for all services and pushes them to Docker Hub.
+#
+# WHY push to Docker Hub?
+#   - Docker Hub is a PUBLIC registry for Docker images (like GitHub for code)
+#   - Once pushed, anyone can pull your images: `docker pull yourname/user-service:latest`
+#   - Kubernetes, AWS ECS, or any server can deploy directly from Docker Hub
+#   - You get versioned images tagged with the Git SHA (e.g., user-service:abc123)
+#
+# SECRETS REQUIRED (set in GitHub → Settings → Secrets):
+#   - DOCKERHUB_USERNAME: your Docker Hub username
+#   - DOCKERHUB_TOKEN:    a Docker Hub access token (NOT your password!)
+#
+# HOW TO GET A DOCKER HUB TOKEN:
+#   1. Go to https://hub.docker.com/settings/security
+#   2. Click "New Access Token"
+#   3. Give it a name (e.g., "github-actions")
+#   4. Copy the token
+#   5. In GitHub: Settings → Secrets → Actions → New repository secret
+#      Name: DOCKERHUB_TOKEN,  Value: (paste the token)
+#      Name: DOCKERHUB_USERNAME,  Value: (your Docker Hub username)
+
+name: CD — Build & Push Images
+
+# ==================== TRIGGER ====================
+# Only on push to main (i.e., after a PR is merged)
+on:
+  push:
+    branches: [ main ]
+
+# ==================== JOBS ====================
+jobs:
+
+  # ---------- Job: Build and push all service images ----------
+  build-and-push:
+    name: Build & Push ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # All 8 services that have Dockerfiles
+        service:
+          - user-service
+          - product-service
+          - order-service
+          - payment-service
+          - notification-service
+          - api-gateway
+          - discovery-server
+          - config-server
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Docker Buildx is an extended Docker builder with advanced features.
+      # We need it for multi-platform builds and better caching.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login to Docker Hub using the secrets stored in GitHub.
+      # Without this, `docker push` would fail with "unauthorized".
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build and push the Docker image.
+      #
+      # TAGS (two tags per image):
+      #   1. "latest" — always points to the newest build
+      #   2. Git SHA (e.g., "abc1234") — a unique, immutable tag for this specific commit
+      #
+      # WHY two tags?
+      #   - "latest" is convenient for quick pulls: docker pull yourname/user-service:latest
+      #   - Git SHA is for PRODUCTION: you always know exactly which code is deployed
+      #   - Rolling back = deploy the previous SHA tag
+      #
+      # CACHING:
+      #   - cache-from/cache-to: GitHub Actions cache stores Docker layer cache
+      #   - If only source code changed (not pom.xml), Maven dependencies layer is reused
+      #   - This can cut build time from 5 minutes to under 1 minute
+      - name: Build and push — ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

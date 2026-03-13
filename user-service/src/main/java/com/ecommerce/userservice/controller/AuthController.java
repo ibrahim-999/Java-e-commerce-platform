@@ -1,6 +1,8 @@
 package com.ecommerce.userservice.controller;
 
-import com.ecommerce.userservice.dto.*;
+import com.ecommerce.userservice.dto.AuthResponse;
+import com.ecommerce.userservice.dto.CreateUserRequest;
+import com.ecommerce.userservice.dto.LoginRequest;
 import com.ecommerce.userservice.model.User;
 import com.ecommerce.userservice.service.JwtService;
 import com.ecommerce.userservice.service.UserService;
@@ -9,11 +11,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 // All endpoints under /api/auth are PUBLIC (configured in SecurityConfig).
 // No token needed to register or log in.

@@ -1,0 +1,94 @@
+# ==================== Discovery Server (Eureka) ====================
+#
+# Eureka is the SERVICE REGISTRY — every service registers itself here
+# on startup and discovers other services by name instead of IP.
+#
+# WHY service discovery in Kubernetes?
+#   Kubernetes already has built-in service discovery (DNS-based Services).
+#   We're keeping Eureka because:
+#   1. Our Spring Boot apps are already configured to use it
+#   2. It demonstrates the "sidecar" service discovery pattern
+#   3. It provides a nice dashboard at :8761 for learning
+#
+#   In a pure Kubernetes deployment, you'd typically remove Eureka entirely
+#   and rely on Kubernetes Services for DNS resolution. But for this learning
+#   project, we keep both to compare the approaches.
+#
+# STARTUP ORDER:
+#   Discovery Server must start FIRST, before any other service.
+#   Other services will retry connecting to Eureka if it's not ready yet,
+#   but having it up first avoids unnecessary retry logs.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-server
+  namespace: ecommerce
+  labels:
+    app: discovery-server
+spec:
+  replicas: 1                # Eureka in single-instance mode (fine for learning)
+  selector:
+    matchLabels:
+      app: discovery-server
+  template:
+    metadata:
+      labels:
+        app: discovery-server
+    spec:
+      containers:
+        - name: discovery-server
+          image: discovery-server:latest
+          imagePullPolicy: Never     # Use locally-built image, don't pull from Docker Hub
+          # imagePullPolicy: Never tells Kubernetes to use the image already
+          # in minikube's local Docker daemon. Without this, Kubernetes would
+          # try to pull from Docker Hub and fail (we haven't pushed there).
+          ports:
+            - containerPort: 8761
+          env:
+            - name: EUREKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: EUREKA_USERNAME
+            - name: EUREKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecommerce-secrets
+                  key: EUREKA_PASSWORD
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          # resources.requests: minimum guaranteed resources for this Pod
+          # resources.limits: maximum allowed — Kubernetes kills the Pod if exceeded
+          # CPU is measured in "millicores": 500m = 0.5 CPU core
+          # Memory uses standard units: 256Mi = 256 megabytes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server
+  namespace: ecommerce
+spec:
+  selector:
+    app: discovery-server
+  ports:
+    - port: 8761
+      targetPort: 8761
