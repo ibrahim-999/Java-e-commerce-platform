@@ -23,7 +23,7 @@
 #   4. minikube has a built-in Nginx Ingress Controller
 #
 # ENABLE: minikube addons enable ingress
-# Then add to /etc/hosts: <minikube-ip> ecommerce.local zipkin.local eureka.local
+# Then add to /etc/hosts: <minikube-ip> ecommerce.local zipkin.local eureka.local prometheus.local grafana.local
 #
 # For our learning project, we're routing everything through the API Gateway
 # (which already handles routing), so the Ingress just points to the gateway.
@@ -78,3 +78,27 @@ spec:
                 name: discovery-server
                 port:
                   number: 8761
+
+    # Route: prometheus.local → Prometheus UI
+    - host: prometheus.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+
+    # Route: grafana.local → Grafana dashboards
+    - host: grafana.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000

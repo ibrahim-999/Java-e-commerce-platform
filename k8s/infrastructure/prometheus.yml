@@ -1,0 +1,154 @@
+# ==================== Prometheus ====================
+#
+# Prometheus is a PULL-based monitoring system. Every 15 seconds it scrapes
+# metrics from each service's /actuator/prometheus endpoint and stores them
+# as time series data. Grafana then queries Prometheus to build dashboards.
+#
+# In Kubernetes, Prometheus config is stored in a ConfigMap rather than
+# a local file. This makes it easy to update scrape targets without
+# rebuilding a Docker image.
+#
+# The scrape targets use Kubernetes DNS names:
+#   <service-name>.<namespace>.svc.cluster.local:<port>
+# But since Prometheus runs in the same namespace, just <service-name>:<port> works.
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ecommerce
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      - job_name: 'user-service'
+        metrics_path: /actuator/prometheus
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        static_configs:
+          - targets: ['user-service:8081']
+
+      - job_name: 'product-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['product-service:8082']
+
+      - job_name: 'order-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['order-service:8083']
+
+      - job_name: 'payment-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['payment-service:8084']
+
+      - job_name: 'notification-service'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['notification-service:8085']
+
+      - job_name: 'api-gateway'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['api-gateway:8060']
+
+      - job_name: 'discovery-server'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['discovery-server:8761']
+
+      - job_name: 'config-server'
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ['config-server:8888']
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ecommerce
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: storage
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: storage
+          persistentVolumeClaim:
+            claimName: prometheus-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ecommerce
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090

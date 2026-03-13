@@ -1,0 +1,277 @@
+# ==================== Grafana ====================
+#
+# Grafana is a dashboard and visualization platform. It queries Prometheus
+# for metrics and renders them as graphs, gauges, and tables.
+#
+# Three ConfigMaps handle auto-provisioning so Grafana is ready out of the box:
+#   1. grafana-datasources — connects Grafana to Prometheus
+#   2. grafana-dashboard-provider — tells Grafana where to find dashboard JSON
+#   3. grafana-dashboards — the actual dashboard JSON (10 panels)
+#
+# Default credentials: admin / admin (Grafana prompts you to change on first login)
+
+---
+# ConfigMap 1: Datasource — auto-configure Prometheus as the default data source
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: ecommerce
+data:
+  prometheus.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: true
+---
+# ConfigMap 2: Dashboard provider — tells Grafana to load dashboards from /var/lib/grafana/dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: ecommerce
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: 'E-Commerce Platform'
+        orgId: 1
+        folder: 'E-Commerce Platform'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+---
+# ConfigMap 3: Dashboard JSON — the actual dashboard with 10 panels
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: ecommerce
+data:
+  ecommerce-platform.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Service Status",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [
+            { "expr": "up{job=~\"user-service|product-service|order-service|payment-service|notification-service|api-gateway|discovery-server|config-server\"}", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "HTTP Request Rate (req/sec)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "reqps" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(http_server_requests_seconds_count{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job)", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Response Time p95 (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "ms", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 1000 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job, le)) * 1000", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "HTTP Error Rate (5xx/sec)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20 }, "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\", job=~\"user-service|product-service|order-service|payment-service|notification-service\"}[5m])) by (job)", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "JVM Heap Memory (MB)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 }, "unit": "decmbytes" }, "overrides": [] },
+          "targets": [
+            { "expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Redis Cache Hit Rate (%)",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 80 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(cache_gets_total{result=\"hit\", job=~\"user-service|product-service\"}) by (job) / (sum(cache_gets_total{result=\"hit\", job=~\"user-service|product-service\"}) by (job) + sum(cache_gets_total{result=\"miss\", job=~\"user-service|product-service\"}) by (job)) * 100", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "DB Connection Pool — Active",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 }, "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "hikaricp_connections_active{job=~\"user-service|product-service|order-service|payment-service\"}", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "JVM Threads — Active",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "jvm_threads_live_threads{job=~\"user-service|product-service|order-service|payment-service|notification-service\"}", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "GC Pause Time (ms/sec)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }, "unit": "ms" }, "overrides": [] },
+          "targets": [
+            { "expr": "rate(jvm_gc_pause_seconds_sum[5m]) * 1000", "legendFormat": "{{job}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Gateway — Request Rate by Route",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+          "datasource": { "type": "prometheus", "uid": "" },
+          "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 }, "unit": "reqps" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(spring_cloud_gateway_requests_seconds_count[5m])) by (routeId)", "legendFormat": "{{routeId}}", "refId": "A" }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["ecommerce", "spring-boot", "microservices"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "E-Commerce Platform Overview",
+      "uid": "ecommerce-overview",
+      "version": 1
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: ecommerce
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ecommerce
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"
+          volumeMounts:
+            - name: storage
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: grafana-pvc
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: ecommerce
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000

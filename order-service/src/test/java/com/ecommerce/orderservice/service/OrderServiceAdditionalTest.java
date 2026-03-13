@@ -342,6 +342,36 @@ class OrderServiceAdditionalTest {
         }
 
         @Test
+        @DisplayName("should skip stock restore when cancelling PAYMENT_FAILED order (already restored)")
+        void shouldSkipStockRestoreForPaymentFailedOrder() {
+            Order order = Order.builder()
+                    .id(1L)
+                    .userId(100L)
+                    .status(OrderStatus.PAYMENT_FAILED)
+                    .totalAmount(BigDecimal.valueOf(500))
+                    .build();
+
+            OrderItem item = OrderItem.builder()
+                    .id(1L).productId(10L).quantity(2)
+                    .priceAtPurchase(BigDecimal.valueOf(250))
+                    .productNameSnapshot("Widget")
+                    .build();
+            order.addItem(item);
+
+            when(orderRepository.findById(1L)).thenReturn(Optional.of(order));
+
+            Order result = orderService.cancelOrder(1L);
+
+            assertThat(result.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+            assertThat(result.getStatusHistory()).hasSize(1);
+            assertThat(result.getStatusHistory().get(0).getFromStatus()).isEqualTo(OrderStatus.PAYMENT_FAILED);
+            assertThat(result.getStatusHistory().get(0).getToStatus()).isEqualTo(OrderStatus.CANCELLED);
+
+            // Stock was already restored during saga compensation — should NOT restore again
+            verify(orderService, never()).restoreProductStock(anyLong(), anyInt());
+        }
+
+        @Test
         @DisplayName("should cancel shipped order successfully")
         void shouldCancelShippedOrder() {
             Order shippedOrder = Order.builder()
